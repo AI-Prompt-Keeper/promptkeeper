@@ -1,0 +1,13 @@
+# Build output (compose uses a volume for target/; ignore for image COPY)
+target/
+# Git and IDE
+.git
+.gitignore
+.cursor
+*.swp
+*.swo
+# Docs and local env (not needed in image)
+*.md
+.env
+.env.*
+!.env.example

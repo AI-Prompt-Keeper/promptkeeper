@@ -1,0 +1,71 @@
+# Local dev: Backend (Rust) + PostgreSQL. Optimized for rapid iterations:
+# - Backend: source mounted, cargo-watch recompiles on change (no container restart).
+# - DB: schema applied on first start via initdb; data in volume.
+# - Backend waits for DB with retries; depends_on uses DB healthcheck.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: promptkeeper-db
+    environment:
+      POSTGRES_USER: promptkeeper
+      POSTGRES_PASSWORD: promptkeeper
+      POSTGRES_DB: promptkeeper
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Run schema/*.sql on first start (alphabetical order: 001, 002, 003)
+      - ./schema:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U promptkeeper -d promptkeeper -q"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - app
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: promptkeeper-backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://promptkeeper:promptkeeper@db:5432/promptkeeper
+      DB_HOST: db
+      DB_PORT: "5432"
+      # Serve frontend from frontend/ directory (mount below)
+      STATIC_DIR: /workspace/frontend
+      # Optional: pass through for execute / Put
+      # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # KMS_KEY_ID: ${KMS_KEY_ID:-}
+      # AWS_REGION: ${AWS_REGION:-}
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount backend source so cargo-watch picks up changes
+      - ./backend:/app
+      # Mount repo so backend can serve frontend (STATIC_DIR=/workspace/frontend)
+      - .:/workspace:ro
+      # Persist target/ for fast incremental builds across container restarts
+      - backend-target:/app/target
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3000/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+    networks:
+      - app
+
+volumes:
+  pgdata:
+  backend-target:
+
+networks:
+  app:
+    driver: bridge

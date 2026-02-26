@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Whitepaper - Prompt Keeper</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="legal-page">
+    <nav class="legal-nav">
+        <div class="container">
+            <a href="index.html" class="legal-nav-home">← Prompt Keeper</a>
+            <a href="trust-center.html" class="legal-nav-trust">Trust Center</a>
+        </div>
+    </nav>
+
+    <main class="legal-main doc-content">
+        <div class="container">
+            <h1 class="legal-page-title">Security Whitepaper</h1>
+            <p class="legal-meta">Last updated: February 2026</p>
+            <p class="legal-lead">Prompt Keeper is designed with security as a core requirement. This document describes our approach to encryption, transport security, and infrastructure controls.</p>
+
+            <section class="doc-section">
+                <h2 id="overview">1. Overview</h2>
+                <p>We protect your prompts and API keys using industry-standard encryption at rest and in transit. Access is authenticated and least-privilege; data is stored in a secure, monitored environment.</p>
+            </section>
+
+            <section class="doc-section">
+                <h2 id="encryption-at-rest">2. Encryption at Rest</h2>
+                <p>All stored data—including prompts, API keys, and metadata—is encrypted at rest.</p>
+                <ul>
+                    <li><strong>Algorithm:</strong> AES-256 (industry standard for symmetric encryption).</li>
+                    <li><strong>Key management:</strong> Encryption keys are managed via a dedicated key management service (KMS). Keys are never stored in plaintext alongside the data they protect.</li>
+                    <li><strong>Scope:</strong> Full-disk or volume-level encryption is applied to all persistent storage; application-level encryption is used for sensitive fields (e.g., API keys) where required.</li>
+                    <li><strong>Key rotation:</strong> Keys are rotated according to a defined policy without requiring re-encryption of historical data where the design supports it.</li>
+                </ul>
+            </section>
+
+            <section class="doc-section">
+                <h2 id="encryption-in-transit">3. Encryption in Transit</h2>
+                <p>All data in transit between your systems and Prompt Keeper is encrypted.</p>
+                <ul>
+                    <li><strong>TLS:</strong> All external endpoints are served over TLS 1.2 or TLS 1.3. Older protocols (SSLv3, TLS 1.0, TLS 1.1) are disabled.</li>
+                    <li><strong>Certificate management:</strong> Certificates are provisioned and renewed automatically; we use strong ciphers and prefer forward secrecy (e.g., ECDHE).</li>
+                    <li><strong>API and proxy traffic:</strong> Requests to our proxy (e.g., <code>/v1/execute</code>) and all responses are transmitted over HTTPS. We do not accept unencrypted HTTP for production traffic.</li>
+                    <li><strong>Upstream providers:</strong> When Prompt Keeper calls third-party LLM or API providers on your behalf, we use the provider’s TLS endpoints; we do not downgrade or strip encryption.</li>
+                </ul>
+            </section>
+
+            <section class="doc-section">
+                <h2 id="access-control">4. Access Control &amp; Authentication</h2>
+                <ul>
+                    <li>Access to the service is authenticated (e.g., API keys, OAuth, or SSO where offered).</li>
+                    <li>Principle of least privilege: users and service accounts have only the permissions required for their role.</li>
+                    <li>Administrative access to production systems is restricted, logged, and reviewed.</li>
+                </ul>
+            </section>
+
+            <section class="doc-section">
+                <h2 id="infrastructure">5. Infrastructure &amp; Operations</h2>
+                <ul>
+                    <li>Production workloads run in a secure, monitored environment with network segmentation where applicable.</li>
+                    <li>Logging and monitoring are in place for security-relevant events (e.g., access, configuration changes).</li>
+                    <li>We apply security patches and dependency updates according to our maintenance and risk policies.</li>
+                </ul>
+            </section>
+
+            <section class="doc-section">
+                <h2 id="summary">6. Summary</h2>
+                <p>Prompt Keeper uses <strong>AES-256 encryption at rest</strong> and <strong>TLS 1.2+ in transit</strong> for all sensitive data. Keys are managed securely, and access is controlled and audited. For questions or a detailed compliance questionnaire, contact your account team or <a href="mailto:security@promptkeeper.example">security@promptkeeper.example</a>.</p>
+            </section>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container footer-inner">
+            <div class="footer-legal">
+                <a href="trust-center.html">Trust Center</a>
+                <span class="footer-sep">·</span>
+                <a href="api-status.html">API Status</a>
+                <span class="footer-sep">·</span>
+                <a href="terms.html">Terms</a>
+                <span class="footer-sep">·</span>
+                <a href="privacy.html">Privacy</a>
+                <span class="footer-sep">·</span>
+                <a href="gdpr-dpa.html">GDPR &amp; DPA</a>
+            </div>
+            <p class="footer-text">© 2026 Prompt Keeper.</p>
+        </div>
+    </footer>
+</body>
+</html>

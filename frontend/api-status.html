@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Status - Prompt Keeper</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="legal-page">
+    <nav class="legal-nav">
+        <div class="container">
+            <a href="index.html" class="legal-nav-home">← Prompt Keeper</a>
+            <a href="trust-center.html" class="legal-nav-trust">Trust Center</a>
+        </div>
+    </nav>
+
+    <main class="legal-main">
+        <div class="container">
+            <h1 class="legal-page-title">API Status</h1>
+            <p class="legal-lead">Current health of Prompt Keeper proxy and services. This dashboard is mocked; in production it can be powered by <a href="https://uptimerobot.com" target="_blank" rel="noopener">UptimeRobot</a> or your status page provider.</p>
+
+            <div class="status-overview">
+                <div class="status-badge status-operational">
+                    <span class="status-dot"></span>
+                    All Systems Operational
+                </div>
+                <p class="status-updated">Last updated: <span id="statusTime">—</span></p>
+            </div>
+
+            <div class="status-list">
+                <div class="status-item">
+                    <div class="status-item-header">
+                        <span class="status-dot status-dot-up"></span>
+                        <h3 class="status-item-title">LLM Proxy API</h3>
+                        <span class="status-item-badge status-up">Operational</span>
+                    </div>
+                    <p class="status-item-desc">POST /v1/execute — prompt execution and streaming. Uptime last 90 days: 99.9%.</p>
+                </div>
+                <div class="status-item">
+                    <div class="status-item-header">
+                        <span class="status-dot status-dot-up"></span>
+                        <h3 class="status-item-title">Dashboard &amp; Auth</h3>
+                        <span class="status-item-badge status-up">Operational</span>
+                    </div>
+                    <p class="status-item-desc">Web app and authentication services.</p>
+                </div>
+                <div class="status-item">
+                    <div class="status-item-header">
+                        <span class="status-dot status-dot-up"></span>
+                        <h3 class="status-item-title">Storage &amp; API Key Vault</h3>
+                        <span class="status-item-badge status-up">Operational</span>
+                    </div>
+                    <p class="status-item-desc">Encrypted storage and key retrieval.</p>
+                </div>
+            </div>
+
+            <div class="status-note">
+                <strong>Integration note:</strong> To use a live status feed, embed <a href="https://uptimerobot.com" target="_blank" rel="noopener">UptimeRobot</a> status widgets or call their public API and map monitors to the components above. Replace this section with your chosen provider’s embed or data.
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer">
+        <div class="container footer-inner">
+            <div class="footer-legal">
+                <a href="trust-center.html">Trust Center</a>
+                <span class="footer-sep">·</span>
+                <a href="security-whitepaper.html">Security</a>
+                <span class="footer-sep">·</span>
+                <a href="terms.html">Terms</a>
+                <span class="footer-sep">·</span>
+                <a href="privacy.html">Privacy</a>
+                <span class="footer-sep">·</span>
+                <a href="gdpr-dpa.html">GDPR &amp; DPA</a>
+            </div>
+            <p class="footer-text">© 2026 Prompt Keeper.</p>
+        </div>
+    </footer>
+
+    <script>
+        document.getElementById('statusTime').textContent = new Date().toLocaleString();
+    </script>
+</body>
+</html>

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analytics & Billing — Prompt Keeper Proxy</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="analytics-page">
+    <header class="analytics-header">
+        <div class="container">
+            <a href="index.html" class="back-link">← Prompt Keeper</a>
+            <h1 class="analytics-title">Analytics & Billing</h1>
+            <p class="analytics-subtitle">Track usage and prove the value of the proxy</p>
+        </div>
+    </header>
+
+    <main class="analytics-main container">
+        <!-- Global Metrics -->
+        <section class="analytics-section">
+            <h2 class="section-heading">Global Metrics</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Total Requests</div>
+                    <div class="stat-value" id="statTotalRequests">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Success Rate</div>
+                    <div class="stat-value" id="statSuccessRate">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Average Latency</div>
+                    <div class="stat-value" id="statAvgLatency">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Estimated Savings (Caching)</div>
+                    <div class="stat-value" id="statSavings">—</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Error Log -->
+        <section class="analytics-section">
+            <h2 class="section-heading">Error Log</h2>
+            <div class="table-toolbar">
+                <input type="search" id="errorSearch" class="search-input" placeholder="Search by function_id or error message…" aria-label="Search errors">
+            </div>
+            <div class="table-wrapper">
+                <table class="data-table" id="errorTable">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Function ID</th>
+                            <th>Error Message</th>
+                        </tr>
+                    </thead>
+                    <tbody id="errorTableBody">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+            <p class="table-empty" id="errorTableEmpty" hidden>No errors match your search.</p>
+        </section>
+
+        <!-- Cost Breakdown -->
+        <section class="analytics-section">
+            <h2 class="section-heading">Cost Breakdown</h2>
+            <p class="section-desc">Token usage by model</p>
+            <div class="chart-container">
+                <div class="bar-chart" id="tokenChart" role="img" aria-label="Token usage by model">
+                    <!-- Bars drawn by JS -->
+                </div>
+                <div class="chart-legend" id="chartLegend"></div>
+            </div>
+        </section>
+
+        <!-- API Management -->
+        <section class="analytics-section">
+            <h2 class="section-heading">API Management</h2>
+            <p class="section-desc">Proxy Keys let your app authenticate with the proxy. Generate new keys or revoke existing ones.</p>
+            <div class="api-actions">
+                <button type="button" class="btn btn-primary" id="btnGenerateKey">Generate new Proxy Key</button>
+            </div>
+            <div class="keys-list" id="keysList">
+                <div class="key-item template" id="keyItemTemplate" hidden>
+                    <div class="key-meta">
+                        <code class="key-preview"></code>
+                        <span class="key-created"></span>
+                    </div>
+                    <div class="key-actions">
+                        <button type="button" class="btn btn-small btn-copy" data-action="copy">Copy</button>
+                        <button type="button" class="btn btn-small btn-revoke" data-action="revoke">Revoke</button>
+                    </div>
+                </div>
+            </div>
+            <p class="keys-empty" id="keysEmpty">No proxy keys yet. Generate one to get started.</p>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p class="footer-text">© 2026 Prompt Keeper. Analytics & Billing.</p>
+        </div>
+    </footer>
+
+    <!-- New key modal (key shown once, then stored in list) -->
+    <dialog class="modal" id="newKeyModal" aria-labelledby="newKeyModalTitle">
+        <div class="modal-content">
+            <h3 id="newKeyModalTitle">New Proxy Key</h3>
+            <p class="modal-warning">Copy this key now. You won’t be able to see it again.</p>
+            <div class="key-display">
+                <code id="newKeyValue"></code>
+                <button type="button" class="btn btn-small btn-copy" id="copyNewKey">Copy</button>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-primary" id="closeNewKeyModal">Done</button>
+            </div>
+        </div>
+    </dialog>
+
+    <script src="analytics.js"></script>
+</body>
+</html>

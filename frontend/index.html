@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prompt Keeper — AI Proxy & Vault for Production LLMs</title>
+    <meta name="description" content="Switch LLMs in production without a deploy. Secure middleware for prompts, keys, and reliability.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+                    colors: {
+                        slate: { 950: '#0a0f1a' }
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-slate-950 text-zinc-100 font-sans antialiased">
+    <!-- Hero Section -->
+    <section class="relative min-h-[90vh] flex items-center justify-center px-4 py-24 overflow-hidden">
+        <div class="absolute inset-0 bg-gradient-to-b from-slate-900/50 via-slate-950 to-slate-950 pointer-events-none" aria-hidden="true"></div>
+        <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" aria-hidden="true"></div>
+        <div class="absolute bottom-1/4 right-1/4 w-80 h-80 bg-sky-500/5 rounded-full blur-3xl pointer-events-none" aria-hidden="true"></div>
+
+        <div class="container relative z-10 text-center max-w-4xl mx-auto">
+            <h1 class="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight text-white mb-6 leading-[1.1]">
+                Switch LLMs in Production Without a Deploy.
+            </h1>
+            <p class="text-lg sm:text-xl text-zinc-400 mb-10 max-w-2xl mx-auto">
+                The secure middleware layer for prompts, keys, and reliability.
+            </p>
+            <div class="flex flex-wrap gap-4 justify-center">
+                <a href="#signup" class="cta-primary inline-flex items-center justify-center px-8 py-4 text-base font-semibold text-slate-950 bg-white hover:bg-zinc-200 rounded-lg transition-colors shadow-lg shadow-white/10">
+                    Get early access
+                </a>
+                <a href="#code" class="inline-flex items-center justify-center px-8 py-4 text-base font-medium text-zinc-300 hover:text-white border border-zinc-600 hover:border-zinc-500 rounded-lg transition-colors">
+                    See how it works
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Code Comparison -->
+    <section id="code" class="py-24 px-4 border-t border-zinc-800/50">
+        <div class="container max-w-6xl mx-auto">
+            <h2 class="text-3xl sm:text-4xl font-bold text-white text-center mb-4">Before vs. After</h2>
+            <p class="text-zinc-400 text-center mb-12 max-w-xl mx-auto">One proxy endpoint. No hardcoded prompts or keys in your repo.</p>
+
+            <div class="grid md:grid-cols-2 gap-6">
+                <!-- Before -->
+                <div class="rounded-xl overflow-hidden border border-zinc-800 bg-slate-900/80">
+                    <div class="flex items-center gap-2 px-4 py-3 border-b border-zinc-800 bg-zinc-900/50">
+                        <span class="w-3 h-3 rounded-full bg-red-500/80"></span>
+                        <span class="w-3 h-3 rounded-full bg-amber-500/80"></span>
+                        <span class="w-3 h-3 rounded-full bg-emerald-500/80"></span>
+                        <span class="text-zinc-500 text-sm font-medium ml-2">Before</span>
+                    </div>
+                    <pre class="code-block p-5 text-sm overflow-x-auto"><code><span class="text-zinc-500">// Scattered config, keys in env, prompt in code</span>
+<span class="text-purple-400">const</span> <span class="text-sky-300">response</span> = <span class="text-purple-400">await</span> <span class="text-amber-300">openai</span>.<span class="text-amber-200">chat</span>.<span class="text-amber-200">completions</span>.<span class="text-emerald-300">create</span>({
+  <span class="text-sky-300">model</span>: <span class="text-amber-200">"gpt-4"</span>,
+  <span class="text-sky-300">messages</span>: [
+    { <span class="text-sky-300">role</span>: <span class="text-amber-200">"system"</span>, <span class="text-sky-300">content</span>: <span class="text-amber-200">"You are a helpful assistant that..."</span> },
+    { <span class="text-sky-300">role</span>: <span class="text-amber-200">"user"</span>, <span class="text-sky-300">content</span>: <span class="text-amber-200">userInput</span> }
+  ],
+  <span class="text-sky-300">temperature</span>: <span class="text-emerald-400">0.7</span>
+});
+<span class="text-zinc-500">// Key from process.env.OPENAI_API_KEY, no failover</span></code></pre>
+                </div>
+
+                <!-- After -->
+                <div class="rounded-xl overflow-hidden border border-emerald-500/30 bg-slate-900/80 ring-1 ring-emerald-500/20">
+                    <div class="flex items-center gap-2 px-4 py-3 border-b border-zinc-800 bg-zinc-900/50">
+                        <span class="w-3 h-3 rounded-full bg-red-500/80"></span>
+                        <span class="w-3 h-3 rounded-full bg-amber-500/80"></span>
+                        <span class="w-3 h-3 rounded-full bg-emerald-500/80"></span>
+                        <span class="text-emerald-400 text-sm font-medium ml-2">After</span>
+                    </div>
+                    <pre class="code-block p-5 text-sm overflow-x-auto"><code><span class="text-zinc-500">// One endpoint, prompts & keys in vault, auto failover</span>
+<span class="text-purple-400">const</span> <span class="text-sky-300">response</span> = <span class="text-purple-400">await</span> <span class="text-amber-300">fetch</span>(<span class="text-amber-200">`${PROXY_URL}/chat`</span>, {
+  <span class="text-sky-300">body</span>: <span class="text-amber-300">JSON</span>.<span class="text-emerald-300">stringify</span>({ <span class="text-sky-300">prompt_id</span>: <span class="text-amber-200">"support-bot"</span>, <span class="text-sky-300">message</span>: <span class="text-amber-200">userInput</span> })
+});
+<span class="text-zinc-500">// Done. Keys and prompts secured; 503? We switch provider for you.</span></code></pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Reliability Grid -->
+    <section class="py-24 px-4 border-t border-zinc-800/50">
+        <div class="container max-w-6xl mx-auto">
+            <h2 class="text-3xl sm:text-4xl font-bold text-white text-center mb-4">Built for reliability</h2>
+            <p class="text-zinc-400 text-center mb-16 max-w-xl mx-auto">Production-grade middleware so you ship with confidence.</p>
+
+            <div class="grid md:grid-cols-3 gap-8">
+                <article class="reliability-card rounded-xl border border-zinc-800 bg-slate-900/50 p-8 hover:border-zinc-700 hover:bg-slate-900/80 transition-all duration-200">
+                    <div class="w-12 h-12 rounded-lg bg-emerald-500/10 flex items-center justify-center mb-6 text-emerald-400" aria-hidden="true">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    </div>
+                    <h3 class="text-xl font-semibold text-white mb-3">Instant Model Failover</h3>
+                    <p class="text-zinc-400 leading-relaxed">When a provider returns 503 or rate limits, we automatically route to your fallback. No code changes, no deploy.</p>
+                </article>
+
+                <article class="reliability-card rounded-xl border border-zinc-800 bg-slate-900/50 p-8 hover:border-zinc-700 hover:bg-slate-900/80 transition-all duration-200">
+                    <div class="w-12 h-12 rounded-lg bg-sky-500/10 flex items-center justify-center mb-6 text-sky-400" aria-hidden="true">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                    </div>
+                    <h3 class="text-xl font-semibold text-white mb-3">Zero-Knowledge Encryption</h3>
+                    <p class="text-zinc-400 leading-relaxed">Prompts and API keys are encrypted at rest. We never see your secrets; only your app and the vault do.</p>
+                </article>
+
+                <article class="reliability-card rounded-xl border border-zinc-800 bg-slate-900/50 p-8 hover:border-zinc-700 hover:bg-slate-900/80 transition-all duration-200">
+                    <div class="w-12 h-12 rounded-lg bg-amber-500/10 flex items-center justify-center mb-6 text-amber-400" aria-hidden="true">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                    </div>
+                    <h3 class="text-xl font-semibold text-white mb-3">Real-time Cost Tracking</h3>
+                    <p class="text-zinc-400 leading-relaxed">Per-model, per-team usage and spend. Set budgets and get alerts before the bill surprises you.</p>
+                </article>
+            </div>
+        </div>
+    </section>
+
+    <!-- Live Terminal Demo -->
+    <section class="py-24 px-4 border-t border-zinc-800/50">
+        <div class="container max-w-3xl mx-auto">
+            <h2 class="text-3xl sm:text-4xl font-bold text-white text-center mb-4">Failover in action</h2>
+            <p class="text-zinc-400 text-center mb-12 max-w-xl mx-auto">When the primary provider fails, the proxy switches automatically.</p>
+
+            <div class="terminal-window rounded-xl overflow-hidden border border-zinc-700 bg-slate-900 shadow-2xl">
+                <div class="flex items-center gap-2 px-4 py-3 border-b border-zinc-800 bg-zinc-900/80">
+                    <span class="w-3 h-3 rounded-full bg-red-500/90"></span>
+                    <span class="w-3 h-3 rounded-full bg-amber-500/90"></span>
+                    <span class="w-3 h-3 rounded-full bg-emerald-500/90"></span>
+                    <span class="text-zinc-500 text-sm ml-3 font-mono">promptkeeper proxy — dev</span>
+                </div>
+                <div class="terminal-body p-5 font-mono text-sm text-zinc-300 min-h-[180px]">
+                    <div class="terminal-line"><span class="text-zinc-500">$</span> curl -X POST https://api.promptkeeper.io/v1/chat ...</div>
+                    <div class="terminal-line"><span class="text-amber-400">[OPENAI]</span> 503 Service Unavailable</div>
+                    <div class="terminal-line"><span class="text-sky-400">[FAILOVER]</span> Primary unavailable, trying fallback...</div>
+                    <div class="terminal-line terminal-typing">
+                        <span class="text-emerald-400">[SUCCESS]</span> Switched to Anthropic Claude due to OpenAI 503 error<span class="cursor-blink">|</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA + Signup -->
+    <section id="signup" class="py-24 px-4 border-t border-zinc-800/50">
+        <div class="container max-w-xl mx-auto text-center">
+            <h2 class="text-3xl sm:text-4xl font-bold text-white mb-4">Ready to simplify production LLMs?</h2>
+            <p class="text-zinc-400 mb-10">Get early access. No credit card. We'll notify you at launch.</p>
+
+            <form class="signup-form max-w-md mx-auto" id="signupForm">
+                <div class="flex flex-col sm:flex-row gap-3">
+                    <input type="email" id="email" name="email" placeholder="you@company.com" required
+                        class="flex-1 min-w-0 px-5 py-4 rounded-lg bg-zinc-900 border border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-white focus:border-transparent">
+                    <button type="submit" class="submit-btn cta-primary px-8 py-4 font-semibold text-slate-950 bg-white hover:bg-zinc-200 rounded-lg transition-colors whitespace-nowrap shadow-lg shadow-white/10">
+                        Request early access
+                    </button>
+                </div>
+                <p class="form-message mt-4 text-sm min-h-[1.5rem]" id="formMessage"></p>
+            </form>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="py-8 px-4 border-t border-zinc-800/50">
+        <div class="container max-w-6xl mx-auto text-center">
+            <p class="text-zinc-500 text-sm">© 2026 Prompt Keeper. Built for CTOs and senior developers.</p>
+            <p class="mt-3">
+                <a href="analytics.html" class="text-zinc-400 hover:text-white text-sm transition-colors">Analytics & Billing</a>
+            </p>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>

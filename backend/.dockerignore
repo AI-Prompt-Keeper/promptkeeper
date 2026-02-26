@@ -1,0 +1,6 @@
+# Build output
+target/
+# Local env (not needed in image)
+.env
+.env.*
+!.env.example

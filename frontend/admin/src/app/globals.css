@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --lavender: #B19CD9;
+  --lavender-light: #D4C5E8;
+  --lavender-dark: #8B7BA8;
+  --cream: #FFF8E7;
+  --cream-dark: #F5EED6;
+  --midnight: #1A1F3A;
+  --midnight-light: #2A3450;
+  --text-dark: #2C2C2C;
+  --text-light: #6B6B6B;
+}
+
+body {
+  @apply bg-cream text-[var(--text-dark)] antialiased;
+}
+
+/* Variable highlight in editor */
+.token-variable {
+  color: var(--lavender-dark);
+  font-weight: 600;
+  background: rgba(177, 156, 217, 0.15);
+  padding: 0 2px;
+  border-radius: 3px;
+}

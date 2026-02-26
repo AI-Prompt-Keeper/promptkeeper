@@ -1,0 +1,100 @@
+# --- IDE & Editor ---
+.cursor/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# --- OS ---
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# --- Temporary & Local ---
+tmp/
+*.tmp
+*.temp
+*.log
+*.bak
+*.backup
+
+# --- Environment & Secrets ---
+.env
+.env.*
+!.env.example
+*.local
+secrets/
+*.pem
+*.key
+
+# --- Rust (Cargo) ---
+/target/
+**/target/
+*.rs.bk
+
+# --- Go ---
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+# Test binary
+*.test
+# Output of go coverage
+*.out
+# Dependency directories
+vendor/
+# Go workspace file
+go.work
+
+# --- Node.js / JavaScript / TypeScript ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+.npm
+.yarn/
+yarn.lock
+pnpm-lock.yaml
+# Build outputs
+dist/
+build/
+.next/
+out/
+.nuxt/
+.output/
+.vite/
+*.tsbuildinfo
+# Vercel
+.vercel/
+
+# --- Docker ---
+# Local override
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# --- Database ---
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Misc ---
+*.pyc
+__pycache__/
+*.egg-info/
+.eggs/
+*.py[cod]
+*$py.class
+.coverage
+htmlcov/
+.pytest_cache/
