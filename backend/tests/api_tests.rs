@@ -27,13 +27,60 @@ async fn test_app_with_pool(pool: sqlx::PgPool) -> axum::Router {
     app_router(None, pool).await.expect("app_router")
 }
 
+/// Create app with function "test_fn_disabled" (primary=test_provider_disabled, no backups).
+/// Call before creating app so load_from_db picks it up. Uses context_id='' for global deployment.
+async fn setup_function_disabled_provider_no_fallback(pool: &sqlx::PgPool) {
+    ensure_test_provider_disabled(pool).await;
+
+    let provider_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM supported_providers WHERE provider = 'test_provider_disabled'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("test_provider_disabled must exist");
+
+    let function_id: i64 = sqlx::query_scalar(
+        "INSERT INTO functions (name, primary_provider_id, response_format, provider_config) \
+         VALUES ('test_fn_disabled', $1, NULL, '{}'::jsonb) \
+         ON CONFLICT (name) DO UPDATE SET primary_provider_id = $1 RETURNING id",
+    )
+    .bind(provider_id)
+    .fetch_one(pool)
+    .await
+    .expect("insert function");
+
+    let version_id: i64 = sqlx::query_scalar(
+        "INSERT INTO prompt_versions (function_id, template_text, context_id) \
+         VALUES ($1, 'Hello {{name}}!', '') RETURNING id",
+    )
+    .bind(function_id)
+    .fetch_one(pool)
+    .await
+    .expect("insert prompt_version");
+
+    sqlx::query(
+        "INSERT INTO deployments (function_id, version_id, tag, context_id) \
+         VALUES ($1, $2, 'production', '') \
+         ON CONFLICT (function_id, context_id, tag) DO UPDATE SET version_id = $2",
+    )
+    .bind(function_id)
+    .bind(version_id)
+    .execute(pool)
+    .await
+    .expect("insert deployment");
+}
+
 /// Create app + registered user with api_key. For execute tests that need auth.
-async fn test_app_with_api_key() -> (axum::Router, String) {
+/// Pass true for setup_disabled_fn to create test_fn_disabled (primary=test_provider_disabled, no backups).
+async fn test_app_with_api_key_inner(setup_disabled_fn: bool) -> (axum::Router, String) {
     let pool = PgPoolOptions::new()
         .max_connections(2)
         .connect(&test_db_url())
         .await
         .expect("connect to test db");
+    if setup_disabled_fn {
+        setup_function_disabled_provider_no_fallback(&pool).await;
+    }
     let app = test_app_with_pool(pool).await;
     let email = format!(
         "execute-{}@example.com",
@@ -68,6 +115,10 @@ async fn test_app_with_api_key() -> (axum::Router, String) {
     (app, api_key)
 }
 
+async fn test_app_with_api_key() -> (axum::Router, String) {
+    test_app_with_api_key_inner(false).await
+}
+
 /// Helper to get response body as bytes.
 async fn body_bytes(body: axum::body::Body) -> Vec<u8> {
     body.collect().await.unwrap().to_bytes().to_vec()
@@ -76,6 +127,18 @@ async fn body_bytes(body: axum::body::Body) -> Vec<u8> {
 /// Helper to get response body as UTF-8 string.
 async fn body_string(body: axum::body::Body) -> String {
     String::from_utf8_lossy(&body_bytes(body).await).into_owned()
+}
+
+/// Ensure test_provider_disabled exists in supported_providers (for provider validation tests).
+async fn ensure_test_provider_disabled(pool: &sqlx::PgPool) {
+    sqlx::query(
+        "INSERT INTO supported_providers (provider, supported, enabled) VALUES ($1, true, false) \
+         ON CONFLICT (provider) DO UPDATE SET supported = true, enabled = false",
+    )
+    .bind("test_provider_disabled")
+    .execute(pool)
+    .await
+    .expect("ensure test_provider_disabled");
 }
 
 /// Parse first SSE data payload from stream body. Returns the JSON object if present.
@@ -295,6 +358,67 @@ async fn execute_empty_function_id_returns_function_not_found() {
 }
 
 #[tokio::test]
+async fn execute_provider_disabled_no_fallback_returns_error() {
+    let (app, api_key) = test_app_with_api_key_inner(true).await;
+    let body = json!({
+        "function_id": "test_fn_disabled",
+        "variables": { "name": "Alice" }
+    });
+
+    let response = app
+        .oneshot(
+            Request::post("/v1/execute")
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body_str = body_string(response.into_body()).await;
+    let data = parse_first_sse_data(&body_str).expect("SSE must contain data event");
+    let err = data.get("error").and_then(|v| v.as_str()).expect("Must have error field");
+    assert!(
+        err.contains("disabled") || err.to_lowercase().contains("not enabled"),
+        "expected 'disabled' or 'not enabled' in error: {}",
+        err
+    );
+}
+
+#[tokio::test]
+async fn execute_provider_unsupported_no_fallback_returns_error() {
+    let (app, api_key) = test_app_with_api_key().await;
+    let body = json!({
+        "function_id": "default",
+        "variables": { "name": "Alice" },
+        "provider": "test_provider_unsupported"
+    });
+
+    let response = app
+        .oneshot(
+            Request::post("/v1/execute")
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body_str = body_string(response.into_body()).await;
+    let data = parse_first_sse_data(&body_str).expect("SSE must contain data event");
+    let err = data.get("error").and_then(|v| v.as_str()).expect("Must have error field");
+    assert!(
+        err.contains("not supported") || err.to_lowercase().contains("unsupported"),
+        "expected 'not supported' in error: {}",
+        err
+    );
+}
+
+#[tokio::test]
 async fn execute_empty_variables_defaults_to_empty_object() {
     let (app, api_key) = test_app_with_api_key().await;
     let body = json!({
@@ -485,6 +609,70 @@ async fn put_key_deny_unknown_fields_returns_422() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn put_key_disabled_provider_returns_error() {
+    let (app, api_key) = test_app_with_api_key().await;
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&test_db_url())
+        .await
+        .expect("connect to test db");
+    ensure_test_provider_disabled(&pool).await;
+
+    let body = json!({
+        "raw_secret": "sk-xxx",
+        "provider": "test_provider_disabled"
+    });
+
+    let response = app
+        .oneshot(
+            Request::post("/v1/keys")
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(!response.status().is_success(), "adding key for disabled provider must fail");
+    if response.status() == StatusCode::BAD_REQUEST {
+        let body_str = body_string(response.into_body()).await;
+        let parsed: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+        let err = parsed.get("error").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(err.contains("not enabled") || err.to_lowercase().contains("disabled"), "expected 'not enabled' or 'disabled' in error: {}", err);
+    }
+}
+
+#[tokio::test]
+async fn put_key_unsupported_provider_returns_error() {
+    let (app, api_key) = test_app_with_api_key().await;
+
+    let body = json!({
+        "raw_secret": "sk-xxx",
+        "provider": "test_provider_unsupported"
+    });
+
+    let response = app
+        .oneshot(
+            Request::post("/v1/keys")
+                .header("Authorization", format!("Bearer {}", api_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(!response.status().is_success(), "adding key for unsupported provider must fail");
+    if response.status() == StatusCode::BAD_REQUEST {
+        let body_str = body_string(response.into_body()).await;
+        let parsed: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+        let err = parsed.get("error").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(err.contains("not supported") || err.to_lowercase().contains("unsupported"), "expected 'not supported' in error: {}", err);
+    }
 }
 
 #[tokio::test]

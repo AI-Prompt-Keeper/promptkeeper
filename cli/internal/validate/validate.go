@@ -22,6 +22,7 @@ const (
 	MaxVarValueLen  = 4096
 	MaxVarPairs     = 32
 	MaxFilePathLen  = 4096
+	MaxModelLen     = 128
 )
 
 // Allowed characters for identifiers (provider, prompt_title)
@@ -56,6 +57,18 @@ func ValidatePassword(password string) error {
 	}
 	if utf8.RuneCountInString(password) > MaxPasswordLen {
 		return fmt.Errorf("password exceeds maximum length")
+	}
+	return nil
+}
+
+// ValidateModel validates model name (e.g. gpt-4o, claude-3-5-sonnet-20240620).
+func ValidateModel(model string) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	if utf8.RuneCountInString(model) > MaxModelLen {
+		return fmt.Errorf("model name exceeds maximum length")
 	}
 	return nil
 }

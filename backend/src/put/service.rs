@@ -4,7 +4,10 @@
 use chrono::Utc;
 use sqlx::Row;
 
-use crate::db::DbFunctionStore;
+use crate::db::{
+    format_provider_error_with_list, get_provider_status, get_supported_providers_list,
+    DbFunctionStore, ProviderStatus,
+};
 use crate::put::StorageResult;
 use crate::secrets::{EnvelopeError, SecretEnveloper};
 
@@ -43,6 +46,7 @@ impl PutFunctionService {
     }
 
     /// Store provider API key. Encrypts with envelope; persists to api_keys.
+    /// Validates provider is supported and enabled before storing.
     pub async fn store_key(
         &self,
         provider: &str,
@@ -55,35 +59,61 @@ impl PutFunctionService {
         if provider.is_empty() {
             return Err(PutServiceError::Validation("provider is required".into()));
         }
+        let status = get_provider_status(&self.db, provider)
+            .await
+            .map_err(|e| PutServiceError::Db(e))?;
+        match status {
+            ProviderStatus::NotSupported => {
+                let list = get_supported_providers_list(&self.db)
+                    .await
+                    .unwrap_or_default();
+                return Err(PutServiceError::Validation(
+                    format_provider_error_with_list(provider, &list, "not supported"),
+                ));
+            }
+            ProviderStatus::Disabled => {
+                let list = get_supported_providers_list(&self.db)
+                    .await
+                    .unwrap_or_default();
+                return Err(PutServiceError::Validation(
+                    format_provider_error_with_list(provider, &list, "not enabled"),
+                ));
+            }
+            ProviderStatus::Available => {}
+        }
         self.persist_api_key(&user_id, &workspace_id, provider, raw_secret, context_id)
             .await
     }
 
     /// Store prompt template for a named function. Persists to prompt_versions + deployment.
     /// Optional provider sets primary_provider when creating a new function.
+    /// Optional preferred_model resolves to models.id and sets prompt_versions.preferred_model_id.
     pub async fn store_prompt(
         &self,
         name: &str,
         raw_secret: &str,
         context_id: &str,
         provider: Option<&str>,
+        preferred_model: Option<&str>,
     ) -> Result<StorageResult, PutServiceError> {
         let name = name.trim();
         if name.is_empty() {
             return Err(PutServiceError::Validation("name is required".into()));
         }
-        self.persist_prompt(name, raw_secret, context_id, provider)
+        self.persist_prompt(name, raw_secret, context_id, provider, preferred_model)
             .await
     }
 
     /// Persist prompt: ensure function exists, insert prompt_version (encrypted), upsert deployment.
     /// primary_provider defaults to 'openai' when creating a new function; optional provider overrides.
+    /// preferred_model: resolved (provider + name) -> models.id, inserted if missing.
     async fn persist_prompt(
         &self,
         function_id: &str,
         raw_secret: &str,
         context_id: &str,
         primary_provider: Option<&str>,
+        preferred_model: Option<&str>,
     ) -> Result<StorageResult, PutServiceError> {
         let blob = self
             .enveloper
@@ -107,16 +137,29 @@ impl PutFunctionService {
             match exists {
                 Some(id) => id,
                 None => {
-                    let prov = primary_provider
+                    let prov_name = primary_provider
                         .map(str::trim)
                         .filter(|s| !s.is_empty())
                         .unwrap_or("openai");
+                    let provider_id: i64 = sqlx::query_scalar(
+                        "SELECT id FROM supported_providers WHERE provider = $1",
+                    )
+                    .bind(prov_name)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|e| PutServiceError::Db(e.to_string()))?
+                    .ok_or_else(|| {
+                        PutServiceError::Validation(format!(
+                            "provider '{}' not in supported_providers; add it first",
+                            prov_name
+                        ))
+                    })?;
                     let r = sqlx::query(
-                        "INSERT INTO functions (name, primary_provider, backup_providers, response_format, provider_config) \
-                         VALUES ($1, $2, '[]'::jsonb, NULL, '{}'::jsonb) RETURNING id",
+                        "INSERT INTO functions (name, primary_provider_id, response_format, provider_config) \
+                         VALUES ($1, $2, NULL, '{}'::jsonb) RETURNING id",
                     )
                     .bind(function_id)
-                    .bind(prov)
+                    .bind(provider_id)
                     .fetch_one(&mut *tx)
                     .await
                     .map_err(|e| PutServiceError::Db(e.to_string()))?;
@@ -125,15 +168,60 @@ impl PutFunctionService {
             }
         };
 
+        // 1b. Resolve preferred_model -> models.id (provider = function's primary)
+        let preferred_model_id: Option<i64> = {
+            let prov: String = sqlx::query_scalar(
+                "SELECT sp.provider FROM functions f JOIN supported_providers sp ON sp.id = f.primary_provider_id WHERE f.id = $1",
+            )
+            .bind(function_db_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| PutServiceError::Db(e.to_string()))?
+            .unwrap_or_else(|| primary_provider.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("openai").to_string());
+            let model_name = preferred_model.map(str::trim).filter(|s| !s.is_empty());
+            match model_name {
+                Some(name) => {
+                    let provider_id: i64 = sqlx::query_scalar(
+                        "SELECT id FROM supported_providers WHERE provider = $1",
+                    )
+                    .bind(&prov)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|e| PutServiceError::Db(e.to_string()))?
+                    .ok_or_else(|| {
+                        PutServiceError::Validation(format!(
+                            "provider '{}' not in supported_providers",
+                            prov
+                        ))
+                    })?;
+                    let id: Option<i64> = sqlx::query_scalar(
+                        r#"
+                        INSERT INTO models (provider_id, name) VALUES ($1, $2)
+                        ON CONFLICT (provider_id, name) DO UPDATE SET name = EXCLUDED.name
+                        RETURNING id
+                        "#,
+                    )
+                    .bind(provider_id)
+                    .bind(name)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|e| PutServiceError::Db(e.to_string()))?;
+                    id
+                }
+                None => None,
+            }
+        };
+
         // 2. Insert prompt_version (immutable; encrypted)
         let version_row = sqlx::query(
             r#"
-            INSERT INTO prompt_versions (function_id, template_text, model_config, provider_settings, encrypted_payload, encrypted_dek, nonce, kms_key_id, context_id)
-            VALUES ($1, NULL, '{}'::jsonb, '{}'::jsonb, $2, $3, $4, $5, $6)
+            INSERT INTO prompt_versions (function_id, preferred_model_id, template_text, model_config, provider_settings, encrypted_payload, encrypted_dek, nonce, kms_key_id, context_id)
+            VALUES ($1, $2, NULL, '{}'::jsonb, '{}'::jsonb, $3, $4, $5, $6, $7)
             RETURNING id, created_at
             "#,
         )
         .bind(function_db_id)
+        .bind(preferred_model_id)
         .bind(&blob.encrypted_payload)
         .bind(&blob.encrypted_dek)
         .bind(&blob.nonce)

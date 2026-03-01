@@ -27,6 +27,7 @@ Runs the execute pipeline: resolves function config, renders the prompt with var
 | `function_id` | string | Yes | Identifier of the function (e.g. `customer_support_reply`). Used to look up prompt template and provider config. |
 | `variables` | object | No | Map of variable names to JSON values. Injected into the prompt template (Handlebars). Default: `{}`. |
 | `provider` | string | No | Preferred provider (e.g. `"openai"`, `"anthropic"`). If in the function's provider list, tried first. |
+| `model` | string | No | Model override. Takes precedence over prompt version default. If omitted everywhere, provider chooses. |
 
 **Example request body:**
 
@@ -37,7 +38,8 @@ Runs the execute pipeline: resolves function config, renders the prompt with var
     "name": "Alice",
     "query": "What is the return policy?"
   },
-  "provider": "anthropic"
+  "provider": "anthropic",
+  "model": "claude-3-5-sonnet-20240620"
 }
 ```
 
@@ -118,6 +120,7 @@ Stores a prompt template for a named function. Uses envelope encryption. Raw sec
 | `name` | string | Yes | Function/prompt name (e.g. `"customer_support"`). |
 | `raw_secret` | string | Yes | Raw prompt template (e.g. Handlebars). Never logged. |
 | `provider` | string | No | Optional default provider when creating a new function. |
+| `preferred_model` | string | No | Default model for this version (e.g. `"gpt-4o"`, `"claude-3-5-sonnet-20240620"`). Stored in `prompt_versions`; changes create a new version. |
 
 **Example request body:**
 
@@ -125,7 +128,8 @@ Stores a prompt template for a named function. Uses envelope encryption. Raw sec
 {
   "name": "customer_support",
   "raw_secret": "Hello {{name}}!",
-  "provider": "openai"
+  "provider": "openai",
+  "preferred_model": "gpt-4o"
 }
 ```
 

@@ -8,6 +8,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use std::pin::Pin;
 use chrono::{DateTime, Utc};
 use futures_util::Stream;
 use rand::RngCore;
@@ -19,7 +20,7 @@ use tracing::Instrument;
 use crate::auth::api_token::Auth;
 use crate::auth::crypto::{hash_password, verify_password};
 use crate::db::DbFunctionStore;
-use crate::execute::{execute_request, ExecuteState};
+use crate::execute::{ExecuteState};
 use crate::put::{PutFunctionService, PutKeyRequestBody, PutPromptRequestBody, PutStorageResponse, secret_fingerprint};
 use crate::routes::request::ExecuteRequest;
 use crate::secrets::{EnvelopeError, SecretEnveloper};
@@ -38,6 +39,8 @@ pub mod request {
         pub variables: HashMap<String, serde_json::Value>,
         /// Optional: prefer this provider (e.g. "openai", "anthropic") for this request.
         pub provider: Option<String>,
+        /// Optional: model override. Takes precedence over prompt version default. If omitted everywhere, provider chooses.
+        pub model: Option<String>,
     }
 
 }
@@ -92,9 +95,9 @@ pub async fn app_router(secrets: Option<Arc<SecretEnveloper>>, db: sqlx::PgPool)
     });
 
     let execute = ExecuteState {
-        client: ExecuteState::default().client,
         functions: function_store,
-        circuit_breaker: ExecuteState::default().circuit_breaker,
+        db: db.clone(),
+        enveloper: secrets.clone(),
     };
 
     Ok(Router::new()
@@ -405,17 +408,18 @@ async fn login_handler(
     }))
 }
 
-/// POST /v1/execute: parse body with minimal allocation, run execute, stream SSE back.
+/// POST /v1/execute: parse body, run execute via LangChain, stream SSE back.
 /// Requires Authorization: Bearer <api_token> or X-API-Key: <api_token> (pk_... or session token).
 async fn execute_handler(
     State(state): State<AppState>,
     auth: Auth,
     body: Bytes,
 ) -> Sse<impl Stream<Item = Result<Event, axum::Error>> + Send + 'static> {
-    let state = state.execute;
+    let execute_state = state.execute;
     let start = Instant::now();
 
-    // Zero-copy parse: single pass over body bytes.
+    type SseStream = Pin<Box<dyn Stream<Item = Result<Event, axum::Error>> + Send + 'static>>;
+
     let req: ExecuteRequest = match serde_json::from_slice(body.as_ref()) {
         Ok(r) => r,
         Err(e) => {
@@ -423,7 +427,8 @@ async fn execute_handler(
             let event = Event::default()
                 .json_data(serde_json::json!({ "error": e.to_string() }))
                 .unwrap();
-            return Sse::new(futures_util::stream::iter(vec![Ok(event)]));
+            let s: SseStream = Box::pin(futures_util::stream::iter(vec![Ok(event)]));
+            return Sse::new(s);
         }
     };
 
@@ -432,47 +437,59 @@ async fn execute_handler(
 
     let context_id = auth.workspace_id.to_string();
     let result = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        execute_request(state, req, &context_id).instrument(span),
+        std::time::Duration::from_secs(60),
+        crate::execute::execute_request(
+            execute_state,
+            req,
+            &context_id,
+            auth.user_id,
+            auth.workspace_id,
+        )
+        .instrument(span),
     )
     .await;
-    let result = match result {
-        Ok(inner) => inner,
-        Err(_) => {
-            tracing::warn!("execute exceeded 30s client timeout");
-            let event = Event::default()
-                .json_data(serde_json::json!({ "error": "execute exceeded 30s client timeout" }))
-                .unwrap();
-            return Sse::new(futures_util::stream::iter(vec![Ok(event)]));
-        }
-    };
-    let latency_ms = start.elapsed().as_millis();
-    tracing::info!(
-        function_id = %function_id,
-        latency_ms = %latency_ms,
-        "execute stream ready"
-    );
 
-    let events: Vec<Result<Event, axum::Error>> = match result {
-        Ok(evs) => evs.into_iter().map(Ok).collect(),
-        Err(e) => {
-            tracing::warn!(err = %e, "execute failed");
-            let event = Event::default()
-                .json_data(serde_json::json!({ "error": e.to_string() }))
-                .unwrap();
-            vec![Ok(event)]
-        }
-    };
+    let event_stream: SseStream = match result {
+            Ok(Ok(stream)) => {
+                let latency_ms = start.elapsed().as_millis();
+                tracing::info!(
+                    function_id = %function_id,
+                    latency_ms = %latency_ms,
+                    "execute stream ready"
+                );
+                Box::pin(stream)
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(err = %e, "execute failed");
+                let event = crate::execute::execute_error_to_event(&e);
+                Box::pin(futures_util::stream::iter(vec![Ok(event)]))
+            }
+            Err(_) => {
+                tracing::warn!("execute exceeded 60s timeout");
+                let event = crate::execute::execute_error_to_event(
+                    &crate::execute::ExecuteError::Other(
+                        "execute exceeded 60s client timeout".into(),
+                    ),
+                );
+                Box::pin(futures_util::stream::iter(vec![Ok(event)]))
+            }
+        };
 
-    Sse::new(futures_util::stream::iter(events))
+    Sse::new(event_stream)
 }
 
 fn map_put_error(e: crate::put::PutServiceError) -> (axum::http::StatusCode, Json<serde_json::Value>) {
     let (status, msg): (_, String) = match &e {
-        crate::put::PutServiceError::Envelope(EnvelopeError::Kms(_) | EnvelopeError::KmsConfig(_)) => {
+        crate::put::PutServiceError::Envelope(EnvelopeError::Kms(err)) => {
+            tracing::warn!(err = %err, "KMS encrypt failed");
             (axum::http::StatusCode::BAD_GATEWAY, "KMS connection or config failed".into())
         }
-        crate::put::PutServiceError::Envelope(EnvelopeError::KmsDecrypt(_)) => {
+        crate::put::PutServiceError::Envelope(EnvelopeError::KmsConfig(err)) => {
+            tracing::warn!(err = %err, "KMS config failed");
+            (axum::http::StatusCode::BAD_GATEWAY, "KMS connection or config failed".into())
+        }
+        crate::put::PutServiceError::Envelope(EnvelopeError::KmsDecrypt(e)) => {
+            tracing::warn!(err = %e, "KMS decrypt failed");
             (axum::http::StatusCode::BAD_GATEWAY, "KMS decrypt failed".into())
         }
         crate::put::PutServiceError::Envelope(_) => {
@@ -549,6 +566,7 @@ async fn put_prompt_handler(
             body.raw_secret.as_str(),
             &context_id,
             body.provider.as_deref(),
+            body.preferred_model.as_deref(),
         )
         .await
         .map_err(map_put_error)?;

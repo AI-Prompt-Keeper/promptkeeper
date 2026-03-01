@@ -33,6 +33,8 @@ pub struct PutPromptRequestBody {
     pub raw_secret: Zeroizing<String>,
     /// Optional: default provider for this prompt (e.g. "openai", "anthropic").
     pub provider: Option<String>,
+    /// Optional: preferred model for this version (e.g. "gpt-4o", "claude-3-5-sonnet-20240620").
+    pub preferred_model: Option<String>,
 }
 
 fn deserialize_secret<'de, D>(d: D) -> Result<Zeroizing<String>, D::Error>

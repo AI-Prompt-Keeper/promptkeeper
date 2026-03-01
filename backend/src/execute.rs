@@ -1,126 +1,48 @@
-//! Execute pipeline: 30s timeout, waterfall failover, circuit breaker, structural JSON validation.
+//! Execute pipeline: LangChain-based LLM calls with streaming.
+//! Loads provider API keys from api_keys; uses prompt's default provider when request omits provider.
+//! Validates provider is supported and enabled; falls back to backup providers when primary is disabled.
 
-use crate::db::{FunctionMeta, FunctionStoreTrait};
-use crate::providers::{call_provider, is_failover_status, ProviderError, ProviderResponse};
+use crate::db::{
+    format_unsupported_provider_message, get_provider_status, get_supported_providers_list,
+    load_provider_api_key, FunctionMeta, FunctionStoreTrait, ProviderStatus,
+};
 use crate::routes::request::ExecuteRequest;
 use crate::templates::render_prompt;
 use axum::response::sse::Event;
-use bytes::Bytes;
+use futures_util::stream::{Stream, StreamExt};
+use langchain_rust::language_models::llm::LLM;
+use std::pin::Pin;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
-use tracing::{instrument, warn};
+use uuid::Uuid;
 
-/// Total time budget for the whole request (primary + failover + retries). Must not exceed 30s.
-const TOTAL_TIMEOUT_SECS: u64 = 30;
-/// Per-provider call timeout so several attempts fit in 30s.
-const PER_CALL_TIMEOUT: Duration = Duration::from_secs(8);
-/// Circuit breaker: mark unhealthy after this many failures in the window.
-const FAILURE_THRESHOLD: u32 = 3;
-/// Circuit breaker: failure count window.
-const FAILURE_WINDOW: Duration = Duration::from_secs(60);
-/// Circuit breaker: stay unhealthy for this long.
-const UNHEALTHY_DURATION: Duration = Duration::from_secs(5 * 60);
-
-#[derive(Clone)]
-struct CircuitBreakerState {
-    /// Timestamps of recent failures (within FAILURE_WINDOW).
-    failures: Vec<Instant>,
-    /// When the provider can be tried again.
-    unhealthy_until: Option<Instant>,
-}
-
-impl Default for CircuitBreakerState {
-    fn default() -> Self {
-        Self {
-            failures: Vec::new(),
-            unhealthy_until: None,
-        }
-    }
-}
-
-impl CircuitBreakerState {
-    fn record_failure(&mut self, at: Instant) {
-        self.failures.push(at);
-        let cutoff = at.checked_sub(FAILURE_WINDOW).unwrap_or(at);
-        self.failures.retain(|&t| t >= cutoff);
-        if self.failures.len() >= FAILURE_THRESHOLD as usize {
-            self.unhealthy_until = Some(at + UNHEALTHY_DURATION);
-        }
-    }
-
-    fn is_healthy(&self, at: Instant) -> bool {
-        if let Some(until) = self.unhealthy_until {
-            if at < until {
-                return false;
-            }
-        }
-        true
-    }
-}
-
-/// Shared circuit breaker state per provider id.
-pub struct CircuitBreakerRegistry {
-    state: RwLock<std::collections::HashMap<String, CircuitBreakerState>>,
-}
-
-impl CircuitBreakerRegistry {
-    pub fn new() -> Self {
-        Self {
-            state: RwLock::new(std::collections::HashMap::new()),
-        }
-    }
-
-    async fn is_healthy(&self, provider_id: &str, at: Instant) -> bool {
-        let guard = self.state.read().await;
-        guard
-            .get(provider_id)
-            .map(|s| s.is_healthy(at))
-            .unwrap_or(true)
-    }
-
-    async fn record_failure(&self, provider_id: &str, at: Instant) {
-        let mut m = self.state.write().await;
-        m.entry(provider_id.to_string())
-            .or_default()
-            .record_failure(at);
-    }
-}
-
-impl Default for CircuitBreakerRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Shared state for the execute endpoint.
+/// Execute state: function store, DB pool, and KMS enveloper for API key decryption.
 #[derive(Clone)]
 pub struct ExecuteState {
-    pub client: reqwest::Client,
     pub functions: Arc<dyn FunctionStoreTrait>,
-    pub circuit_breaker: Arc<CircuitBreakerRegistry>,
+    pub db: sqlx::PgPool,
+    /// Required for loading provider keys from api_keys.
+    pub enveloper: Option<Arc<crate::secrets::SecretEnveloper>>,
 }
 
-/// Build ExecuteState with an in-memory store (for tests). Seeds a default function.
+/// Build ExecuteState with an in-memory store (for tests).
 pub fn execute_state_with_memory_store() -> ExecuteState {
     let functions = Arc::new(crate::db::FunctionStore::default());
     functions.insert(
         "default".to_string(),
         FunctionMeta {
             primary_provider: "openai".to_string(),
-            backup_providers: vec!["anthropic".to_string(), "llama_local".to_string()],
+            backup_providers: vec!["anthropic".to_string()],
             response_format: Some("json".to_string()),
             prompt_template: "Hello, {{name}}!".to_string(),
-            provider_config: Default::default(),
+            provider_config: std::collections::HashMap::new(),
+            preferred_model: None,
         },
     );
     ExecuteState {
-        client: reqwest::Client::builder()
-            .timeout(Duration::from_secs(TOTAL_TIMEOUT_SECS))
-            .build()
-            .unwrap_or_else(|e| panic!("reqwest client: {}", e)),
         functions,
-        circuit_breaker: Arc::new(CircuitBreakerRegistry::default()),
+        db: sqlx::PgPool::connect_lazy("postgres://localhost/promptkeeper")
+            .expect("lazy pg pool"),
+        enveloper: None,
     }
 }
 
@@ -130,196 +52,293 @@ impl Default for ExecuteState {
     }
 }
 
-/// Build ordered list of providers to try: preferred first (if specified and healthy), then primary, then backups.
-async fn providers_to_try(
+#[derive(Debug, thiserror::Error)]
+pub enum ExecuteError {
+    #[error("function not found: {0}")]
+    FunctionNotFound(String),
+    #[error("provider key not found: {provider}. Store via POST /v1/keys.")]
+    NoProviderKey { provider: String },
+    #[error("KMS not configured; cannot decrypt provider keys.")]
+    NoEnveloper,
+    #[error("render: {0}")]
+    Render(String),
+    #[error("provider {provider} error: {message}")]
+    ProviderError {
+        provider: String,
+        message: String,
+        details: Option<String>,
+    },
+    #[error("provider '{0}' is not supported")]
+    UnsupportedProvider(String),
+    /// Provider is in catalog but disabled. Caller may try fallback.
+    #[error("provider '{0}' is disabled")]
+    ProviderDisabled(String),
+    #[error("{0}")]
+    Other(String),
+}
+
+/// Resolve provider: request's provider if non-empty, else prompt's primary_provider.
+fn resolve_provider<'a>(req: &'a ExecuteRequest, meta: &'a FunctionMeta) -> &'a str {
+    if let Some(ref p) = req.provider {
+        let t = p.trim();
+        if !t.is_empty() {
+            return t;
+        }
+    }
+    meta.primary_provider.as_str()
+}
+
+/// Resolve model: request override > prompt version preferred_model > provider_config.
+/// Returns None when nothing specified — provider uses its default.
+fn resolve_model(
+    req_model: Option<&str>,
     meta: &FunctionMeta,
-    preferred_provider: Option<&str>,
-    now: Instant,
-    cb: &CircuitBreakerRegistry,
-) -> Vec<String> {
+    provider: &str,
+) -> Option<String> {
+    let req = req_model
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let preferred = meta
+        .preferred_model
+        .as_deref()
+        .filter(|s| !s.is_empty());
+    let from_config = meta
+        .provider_config
+        .get(provider)
+        .and_then(|c| c.get("model").and_then(|v| v.as_str()))
+        .filter(|s| !s.is_empty());
+
+    req.or(preferred)
+        .or(from_config)
+        .map(|s| s.to_string())
+}
+
+/// Build ordered list of providers to try: primary first, then backups. Deduped, lowercase.
+fn providers_to_try(primary: &str, backups: &[String]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
-
-    // Collect all configured providers (primary + backups).
-    let mut configured = vec![meta.primary_provider.clone()];
-    for b in &meta.backup_providers {
-        if !configured.contains(b) {
-            configured.push(b.clone());
-        }
+    let p = primary.trim().to_lowercase();
+    if !p.is_empty() && seen.insert(p.clone()) {
+        out.push(p);
     }
-
-    // If client specified a preferred provider and it's in the list and healthy, try it first.
-    if let Some(pref) = preferred_provider {
-        let pref_trimmed = pref.trim();
-        if !pref_trimmed.is_empty() {
-            if let Some(p) = configured.iter().find(|c| c.eq_ignore_ascii_case(pref_trimmed)) {
-                if cb.is_healthy(p, now).await {
-                    out.push(p.clone());
-                }
-            }
-        }
-    }
-
-    // Add primary if not already in out.
-    if cb.is_healthy(&meta.primary_provider, now).await && !out.contains(&meta.primary_provider) {
-        out.push(meta.primary_provider.clone());
-    }
-    for b in &meta.backup_providers {
-        if cb.is_healthy(b, now).await && !out.contains(b) {
-            out.push(b.clone());
+    for b in backups {
+        let b = b.trim().to_lowercase();
+        if !b.is_empty() && seen.insert(b.clone()) {
+            out.push(b);
         }
     }
     out
 }
 
-/// Structural validator: if format is "json", check that body is valid JSON. Returns true if valid or not required.
-fn validate_json_if_requested(body: &[u8], response_format: Option<&str>) -> bool {
-    let Some("json") = response_format else { return true };
-    serde_json::from_slice::<serde_json::Value>(body).is_ok()
-}
-
-/// Build LLM request body (OpenAI-style). In production you might vary by provider.
-fn build_llm_body(meta: &FunctionMeta, provider_id: &str, rendered_prompt: &str) -> Vec<u8> {
-    let model = meta
-        .provider_config
-        .get(provider_id)
-        .and_then(|c| c.get("model").and_then(|v| v.as_str()))
-        .unwrap_or(default_model(provider_id));
-    let body = serde_json::json!({
-        "model": model,
-        "messages": [{"role": "user", "content": rendered_prompt}]
-    });
-    serde_json::to_vec(&body).unwrap_or_default()
-}
-
-fn default_model(provider_id: &str) -> &'static str {
-    match provider_id {
-        "openai" => "gpt-4",
-        "anthropic" => "claude-3-sonnet-20240229",
-        "llama" | "llama_local" => "llama3",
-        _ => "gpt-4",
-    }
-}
-
-/// Single attempt: call one provider and return response or error. Records circuit breaker on failure.
-async fn try_provider(
+/// Execute with a specific provider. Validates provider is supported and enabled, loads key,
+/// resolves model, and calls the LLM. Caller can invoke this for each candidate provider in turn.
+/// model_override: from execute request; takes precedence over meta.preferred_model and provider_config.
+#[tracing::instrument(skip(state, meta, rendered))]
+pub async fn execute_with_provider(
     state: &ExecuteState,
-    provider_id: &str,
     meta: &FunctionMeta,
-    body: &[u8],
-    now: Instant,
-) -> Result<ProviderResponse, ProviderError> {
-    let config = meta
-        .provider_config
-        .get(provider_id)
-        .cloned()
-        .unwrap_or(serde_json::Value::Null);
-    match call_provider(
-        &state.client,
-        provider_id,
-        &config,
-        body,
-        PER_CALL_TIMEOUT,
-    )
-    .await
-    {
-        Ok(r) => Ok(r),
-        Err(e) => {
-            state.circuit_breaker.record_failure(provider_id, now).await;
-            Err(e)
+    rendered: &str,
+    context_id: &str,
+    user_id: Uuid,
+    workspace_id: Uuid,
+    provider: &str,
+    model_override: Option<&str>,
+) -> Result<
+    Pin<Box<dyn Stream<Item = Result<Event, axum::Error>> + Send>>,
+    ExecuteError,
+> {
+    let provider = provider.trim().to_lowercase();
+
+    let status = get_provider_status(&state.db, &provider)
+        .await
+        .map_err(|e| ExecuteError::Other(e))?;
+    match status {
+        ProviderStatus::NotSupported => {
+            let list = get_supported_providers_list(&state.db)
+                .await
+                .unwrap_or_default();
+            return Err(ExecuteError::UnsupportedProvider(
+                format_unsupported_provider_message(&provider, &list),
+            ));
         }
+        ProviderStatus::Disabled => return Err(ExecuteError::ProviderDisabled(provider)),
+        ProviderStatus::Available => {}
     }
+
+    if provider != "openai" && provider != "anthropic" {
+        let list = get_supported_providers_list(&state.db)
+            .await
+            .unwrap_or_default();
+        return Err(ExecuteError::UnsupportedProvider(
+            format_unsupported_provider_message(&provider, &list),
+        ));
+    }
+
+    let enveloper = state
+        .enveloper
+        .as_ref()
+        .ok_or(ExecuteError::NoEnveloper)?;
+
+    let api_key = load_provider_api_key(&state.db, enveloper, user_id, workspace_id, &provider)
+        .await
+        .map_err(|e| match &e {
+            crate::db::ApiKeyLoadError::NotFound { provider: p } => ExecuteError::NoProviderKey {
+                provider: p.clone(),
+            },
+            _ => ExecuteError::Other(e.to_string()),
+        })?;
+
+    let model = resolve_model(model_override, meta, &provider);
+
+    let messages = vec![langchain_rust::schemas::messages::Message::new_human_message(
+        rendered.to_string(),
+    )];
+
+    let stream = match provider.as_str() {
+        "openai" => {
+            let config = langchain_rust::llm::OpenAIConfig::default().with_api_key(api_key);
+            let mut openai = langchain_rust::llm::openai::OpenAI::default().with_config(config);
+            if let Some(ref m) = model {
+                openai = openai.with_model(m.clone());
+            }
+            openai.stream(&messages).await
+        }
+        "anthropic" => {
+            let mut claude = langchain_rust::llm::Claude::default().with_api_key(api_key);
+            if let Some(ref m) = model {
+                claude = claude.with_model(m.clone());
+            }
+            claude.stream(&messages).await
+        }
+        _ => {
+            let list = get_supported_providers_list(&state.db)
+                .await
+                .unwrap_or_default();
+            return Err(ExecuteError::UnsupportedProvider(
+                format_unsupported_provider_message(&provider, &list),
+            ));
+        }
+    };
+
+    let stream = stream.map_err(|e| {
+        let msg = e.to_string();
+        let details = format!("{:?}", e);
+        ExecuteError::ProviderError {
+            provider: provider.clone(),
+            message: msg,
+            details: Some(details),
+        }
+    })?;
+
+    let provider_owned = provider.clone();
+    let s = stream.map(move |chunk_result| {
+        match chunk_result {
+            Ok(stream_data) => {
+                let content = stream_data.content;
+                if content.is_empty() {
+                    Ok(Event::default().data(""))
+                } else {
+                    let ev = serde_json::json!({
+                        "content": content,
+                        "provider": provider_owned
+                    });
+                    Event::default()
+                        .json_data(ev)
+                        .map_err(|e| axum::Error::from(e))
+                }
+            }
+            Err(e) => {
+                let ev = serde_json::json!({
+                    "error": e.to_string(),
+                    "details": format!("{:?}", e),
+                    "provider": provider_owned
+                });
+                Event::default()
+                    .json_data(ev)
+                    .map_err(|e| axum::Error::from(e))
+            }
+        }
+    });
+
+    Ok(Box::pin(s))
 }
 
-/// Execute with 30s cap, waterfall, circuit breaker, and one JSON validation retry.
-/// context_id: workspace scope for function lookup (from auth); empty = global fallback.
-#[instrument(skip(state, req))]
+/// Execute: resolve function, render prompt, try primary then backup providers until one succeeds.
+#[tracing::instrument(skip(state, req))]
 pub async fn execute_request(
     state: ExecuteState,
     req: ExecuteRequest,
     context_id: &str,
-) -> Result<Vec<Event>, anyhow::Error> {
-    let deadline = Instant::now() + Duration::from_secs(TOTAL_TIMEOUT_SECS);
+    user_id: Uuid,
+    workspace_id: Uuid,
+) -> Result<
+    Pin<Box<dyn Stream<Item = Result<Event, axum::Error>> + Send>>,
+    ExecuteError,
+> {
     let meta = state
         .functions
         .get_with_context(&req.function_id, context_id)
-        .ok_or_else(|| anyhow::anyhow!("function not found: {}", req.function_id))?;
+        .ok_or_else(|| ExecuteError::FunctionNotFound(req.function_id.clone()))?;
 
-    let rendered_prompt = render_prompt(&meta.prompt_template, &req.variables)?;
-    let want_json = meta.response_format.as_deref() == Some("json");
+    let rendered = render_prompt(&meta.prompt_template, &req.variables)
+        .map_err(|e| ExecuteError::Render(e.to_string()))?;
 
-    let mut last_status = 0u16;
-    let mut last_body = Bytes::new();
-    let mut tried = Vec::<String>::new();
-    let mut json_retry_used = false;
+    let primary = resolve_provider(&req, &meta);
+    let providers = providers_to_try(primary, &meta.backup_providers);
 
-    let providers = providers_to_try(
-        &meta,
-        req.provider.as_deref(),
-        Instant::now(),
-        state.circuit_breaker.as_ref(),
-    )
-    .await;
+    let model_override = req.model.as_deref();
 
-    if providers.is_empty() {
-        anyhow::bail!("no healthy providers available");
-    }
-
-    for provider_id in &providers {
-        if Instant::now() >= deadline {
-            break;
-        }
-        let body = build_llm_body(&meta, provider_id, &rendered_prompt);
-        let now = Instant::now();
-
-        let resp = match try_provider(&state, provider_id, &meta, &body, now).await {
-            Ok(r) => r,
-            Err(e) => {
-                warn!(provider = %provider_id, err = %e, "provider call failed");
-                state.circuit_breaker.record_failure(provider_id, now).await;
-                continue;
+    let mut last_disabled_err = None;
+    for provider in providers {
+        match execute_with_provider(
+            &state,
+            &meta,
+            &rendered,
+            context_id,
+            user_id,
+            workspace_id,
+            &provider,
+            model_override,
+        )
+        .await
+        {
+            Ok(stream) => return Ok(stream),
+            Err(ExecuteError::ProviderDisabled(ref p)) => {
+                last_disabled_err = Some(ExecuteError::ProviderDisabled(p.clone()));
             }
-        };
-
-        if is_failover_status(resp.status) {
-            state.circuit_breaker.record_failure(provider_id, Instant::now()).await;
-            last_status = resp.status;
-            last_body = resp.body;
-            tried.push(provider_id.clone());
-            continue;
+            Err(e) => return Err(e),
         }
-
-        last_status = resp.status;
-        last_body = resp.body.clone();
-
-        if want_json && !validate_json_if_requested(&last_body, meta.response_format.as_deref()) {
-            if !json_retry_used {
-                json_retry_used = true;
-                tried.push(provider_id.clone());
-                continue;
-            }
-        }
-
-        let event = Event::default()
-            .json_data(serde_json::json!({
-                "content": String::from_utf8_lossy(last_body.as_ref()),
-                "status": last_status,
-                "provider": provider_id
-            }))
-            .map_err(|e| anyhow::anyhow!("sse json: {}", e))?;
-        return Ok(vec![event]);
     }
 
-    if last_status != 0 {
-        let event = Event::default()
-            .json_data(serde_json::json!({
-                "content": String::from_utf8_lossy(last_body.as_ref()),
-                "error": "all providers failed or timed out",
-                "status": last_status,
-                "tried": tried
-            }))
-            .map_err(|e| anyhow::anyhow!("sse json: {}", e))?;
-        return Ok(vec![event]);
-    }
+    Err(match last_disabled_err {
+        Some(e) => e,
+        None => {
+            let list = get_supported_providers_list(&state.db)
+                .await
+                .unwrap_or_default();
+            ExecuteError::UnsupportedProvider(format_unsupported_provider_message(
+                primary, &list,
+            ))
+        }
+    })
+}
 
-    anyhow::bail!("no healthy providers or all attempts failed")
+/// Helper to convert ExecuteError into a single SSE event for error response.
+/// Returns event with "error" and "details" so our response is an error.
+pub fn execute_error_to_event(err: &ExecuteError) -> Event {
+    let (error, details) = match err {
+        ExecuteError::ProviderError {
+            provider: _,
+            message,
+            details: d,
+        } => (message.clone(), d.clone()),
+        _ => (err.to_string(), None),
+    };
+    let payload = serde_json::json!({
+        "error": error,
+        "details": details
+    });
+    Event::default()
+        .json_data(payload)
+        .unwrap_or_else(|_| Event::default().data("{\"error\":\"internal\"}"))
 }

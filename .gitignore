@@ -19,6 +19,7 @@ Desktop.ini
 
 # --- Temporary & Local ---
 tmp/
+temp_mds/
 *.tmp
 *.temp
 *.log
@@ -87,6 +88,11 @@ docker-compose.override.yaml
 *.db
 *.sqlite
 *.sqlite3
+
+# --- Project docs (local/review) ---
+schema/APPLY_STEPS.md
+schema/REVIEW.md
+schema/BACKEND_INTEGRATION.md
 
 # --- Misc ---
 *.pyc

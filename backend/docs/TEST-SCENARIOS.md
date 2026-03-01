@@ -25,6 +25,8 @@ Concise description of tested scenarios for each public API endpoint.
 | Empty function_id | 200, SSE `{"error": "function not found: "}` |
 | Omitted variables | 200 (defaults to `{}`) |
 | Wrong Content-Type (e.g. text/plain) | 200 (handler parses raw body) |
+| Provider disabled, no fallback (test_fn_disabled) | 200, SSE error "disabled" or "not enabled" |
+| Provider unsupported, no fallback (provider override) | 200, SSE error "not supported" |
 
 ---
 
@@ -38,6 +40,8 @@ Concise description of tested scenarios for each public API endpoint.
 | Prompt without name | 400 or 503 |
 | Key: unknown fields | 422 |
 | Prompt: missing raw_secret | 422 |
+| Key: disabled provider (test_provider_disabled) | 400, error "not enabled" or "disabled" |
+| Key: unsupported provider (test_provider_unsupported) | 400, error "not supported" |
 
 ---
 
@@ -80,3 +84,4 @@ Concise description of tested scenarios for each public API endpoint.
 |-------|----------|
 | Health, Execute, Put key, Put prompt, Register (validation), Login (validation) | None |
 | Register (happy path, duplicate, normalize, missing name), Login (happy path, wrong password) | `DATABASE_URL`, schema applied |
+| Put key (disabled/unsupported provider), Execute (provider disabled/unsupported) | `DATABASE_URL`, schema 001+004 (004 seeds test_provider_disabled) |

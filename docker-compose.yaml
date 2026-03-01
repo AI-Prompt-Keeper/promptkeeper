@@ -43,7 +43,10 @@ services:
       # Optional: pass through for execute / Put
       # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # KMS_KEY_ID: ${KMS_KEY_ID:-}
-      # AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-}
+      KMS_KEY_ID: ${KMS_KEY_ALIAS:-}
     ports:
       - "3000:3000"
     volumes:

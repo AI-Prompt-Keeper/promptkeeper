@@ -10,8 +10,10 @@
 
 ## Prompt Management (001)
 
-- **functions** — Top-level names (e.g. `default`, `customer_support_reply`) + provider routing (primary_provider, backup_providers, provider_config).
-- **prompt_versions** — Immutable rows: `template_text` (plaintext) or envelope columns (encrypted_payload, encrypted_dek, nonce, kms_key_id), plus model_config, provider_settings, context_id.
+- **functions** — Top-level names + `primary_provider_id` (FK), provider_config. Backup providers in `function_backup_providers` (junction).
+- **supported_providers** — Registry: id (PK), provider (unique), supported, enabled.
+- **models** — Catalog: id, provider_id (FK), name (e.g. "opus-4.6"). Referenced by prompt_versions to avoid string duplication.
+- **prompt_versions** — Immutable rows: `preferred_model_id` (FK to models), `template_text` or encrypted columns, model_config, provider_settings, context_id.
 - **deployments** — Maps (function_id, context_id, tag) → version_id. One active version per env per workspace (context_id = '' for global).
 
 ## Immutability
@@ -25,9 +27,10 @@ A trigger on `prompt_versions` blocks `UPDATE` and `DELETE`. To change a prompt,
 **Query (by function name + context):**
 
 ```sql
-SELECT pv.*, f.primary_provider, f.backup_providers, f.provider_config
+SELECT pv.*, sp.provider AS primary_provider, f.provider_config
 FROM deployments d
 JOIN functions f ON f.id = d.function_id
+JOIN supported_providers sp ON sp.id = f.primary_provider_id
 JOIN prompt_versions pv ON pv.id = d.version_id
 WHERE f.name = $1 AND d.tag = 'production' AND d.context_id = $2;
 ```

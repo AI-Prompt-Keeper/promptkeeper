@@ -9,9 +9,9 @@ use sqlx::Row;
 /// Per-function metadata for routing and validation.
 #[derive(Debug, Clone)]
 pub struct FunctionMeta {
-    /// Primary provider id (e.g. "openai", "anthropic").
+    /// Primary provider (e.g. "openai", "anthropic").
     pub primary_provider: String,
-    /// Backup provider ids in order of preference (e.g. ["anthropic", "llama_local"]).
+    /// Backup providers in order of preference.
     pub backup_providers: Vec<String>,
     /// If Some("json"), response will be validated as JSON and may trigger one retry if invalid.
     pub response_format: Option<String>,
@@ -19,6 +19,8 @@ pub struct FunctionMeta {
     pub prompt_template: String,
     /// Provider-specific config (API base URL, model, etc.).
     pub provider_config: HashMap<String, serde_json::Value>,
+    /// Preferred model for this prompt version (from models table). Overrides provider_config/default.
+    pub preferred_model: Option<String>,
 }
 
 impl Default for FunctionMeta {
@@ -29,6 +31,7 @@ impl Default for FunctionMeta {
             response_format: None,
             prompt_template: String::new(),
             provider_config: HashMap::new(),
+            preferred_model: None,
         }
     }
 }
@@ -88,14 +91,22 @@ impl DbFunctionStore {
     pub async fn load_from_db(&self) -> Result<(), LoadError> {
         let rows = sqlx::query(
             r#"
-            SELECT f.name AS function_name, f.primary_provider, f.backup_providers,
+            SELECT f.name AS function_name, sp.provider AS primary_provider,
+                   COALESCE((
+                       SELECT jsonb_agg(sp2.provider ORDER BY fbp.position)
+                       FROM function_backup_providers fbp
+                       JOIN supported_providers sp2 ON sp2.id = fbp.provider_id
+                       WHERE fbp.function_id = f.id
+                   ), '[]'::jsonb) AS backup_providers,
                    f.response_format, f.provider_config,
                    COALESCE(pv.template_text, '') AS template_text,
                    pv.encrypted_payload, pv.encrypted_dek, pv.nonce, pv.kms_key_id,
-                   d.context_id
+                   d.context_id, m.name AS preferred_model
             FROM deployments d
             JOIN functions f ON f.id = d.function_id
+            JOIN supported_providers sp ON sp.id = f.primary_provider_id
             JOIN prompt_versions pv ON pv.id = d.version_id
+            LEFT JOIN models m ON m.id = pv.preferred_model_id
             WHERE d.tag = 'production'
             "#,
         )
@@ -154,12 +165,15 @@ impl DbFunctionStore {
                 String::new()
             };
 
+            let preferred_model: Option<String> = row.try_get("preferred_model").ok();
+
             let meta = FunctionMeta {
                 primary_provider,
                 backup_providers,
                 response_format,
                 prompt_template,
                 provider_config,
+                preferred_model,
             };
             cache.insert(cache_key(&function_name, &context_id), meta);
         }
@@ -197,10 +211,11 @@ impl DbFunctionStore {
                 "default".to_string(),
                 FunctionMeta {
                     primary_provider: "openai".to_string(),
-                    backup_providers: vec!["anthropic".to_string(), "llama_local".to_string()],
+                    backup_providers: vec!["anthropic".to_string()],
                     response_format: Some("json".to_string()),
                     prompt_template: "Hello, {{name}}!".to_string(),
                     provider_config: Default::default(),
+                    preferred_model: None,
                 },
             );
         }
@@ -210,12 +225,21 @@ impl DbFunctionStore {
     pub async fn refresh_deployment(&self, function_name: &str, context_id: &str) -> Result<(), RefreshError> {
         let row = sqlx::query(
             r#"
-            SELECT f.name AS function_name, f.primary_provider, f.backup_providers,
+            SELECT f.name AS function_name, sp.provider AS primary_provider,
+                   COALESCE((
+                       SELECT jsonb_agg(sp2.provider ORDER BY fbp.position)
+                       FROM function_backup_providers fbp
+                       JOIN supported_providers sp2 ON sp2.id = fbp.provider_id
+                       WHERE fbp.function_id = f.id
+                   ), '[]'::jsonb) AS backup_providers,
                    f.response_format, f.provider_config,
-                   pv.template_text, pv.encrypted_payload, pv.encrypted_dek, pv.nonce, pv.kms_key_id
+                   pv.template_text, pv.encrypted_payload, pv.encrypted_dek, pv.nonce, pv.kms_key_id,
+                   m.name AS preferred_model
             FROM deployments d
             JOIN functions f ON f.id = d.function_id
+            JOIN supported_providers sp ON sp.id = f.primary_provider_id
             JOIN prompt_versions pv ON pv.id = d.version_id
+            LEFT JOIN models m ON m.id = pv.preferred_model_id
             WHERE d.tag = 'production' AND f.name = $1 AND d.context_id = $2
             "#,
         )
@@ -274,12 +298,15 @@ impl DbFunctionStore {
             String::new()
         };
 
+        let preferred_model: Option<String> = row.try_get("preferred_model").ok();
+
         let meta = FunctionMeta {
             primary_provider,
             backup_providers,
             response_format,
             prompt_template,
             provider_config,
+            preferred_model,
         };
 
         let mut cache = self
@@ -342,12 +369,153 @@ impl Default for FunctionStore {
     }
 }
 
+/// Provider availability status from supported_providers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderStatus {
+    /// In supported_providers with supported=true and enabled=true.
+    Available,
+    /// In supported_providers with supported=true but enabled=false.
+    Disabled,
+    /// Not in supported_providers.
+    NotSupported,
+}
+
+/// Check if provider is supported and enabled. Used by Put (keys) and Execute.
+pub async fn get_provider_status(
+    pool: &sqlx::PgPool,
+    provider: &str,
+) -> Result<ProviderStatus, String> {
+    #[derive(sqlx::FromRow)]
+    struct ProviderRow {
+        supported: bool,
+        enabled: bool,
+    }
+    let row: Option<ProviderRow> = sqlx::query_as(
+        "SELECT supported, enabled FROM supported_providers WHERE provider = $1",
+    )
+    .bind(provider)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    match row {
+        None => Ok(ProviderStatus::NotSupported),
+        Some(r) => {
+            if !r.supported {
+                Ok(ProviderStatus::NotSupported)
+            } else if !r.enabled {
+                Ok(ProviderStatus::Disabled)
+            } else {
+                Ok(ProviderStatus::Available)
+            }
+        }
+    }
+}
+
+/// List provider names from supported_providers where supported=true, ordered by name.
+/// Excludes providers starting with "test_" (internal use only).
+pub async fn get_supported_providers_list(pool: &sqlx::PgPool) -> Result<Vec<String>, String> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT provider FROM supported_providers WHERE supported = true AND provider NOT LIKE 'test_%' ORDER BY provider",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().map(|r| r.0).collect())
+}
+
+/// Format "Provider X is not supported. Providers supported: {list}" message.
+pub fn format_unsupported_provider_message(provider: &str, supported_list: &[String]) -> String {
+    format_provider_error_with_list(provider, supported_list, "not supported")
+}
+
+/// Format "Provider X is {reason}. Providers supported: {list}" message.
+pub fn format_provider_error_with_list(
+    provider: &str,
+    supported_list: &[String],
+    reason: &str,
+) -> String {
+    let list = if supported_list.is_empty() {
+        "(none configured)".to_string()
+    } else {
+        supported_list
+            .iter()
+            .map(|p| format!("- {}", p))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "Provider {} is {}. Providers supported:\n{}",
+        provider, reason, list
+    )
+}
+
 /// Config returned by mock DB for the execute pipeline (prompt template + provider keys).
 #[derive(Clone, Debug)]
 pub struct FunctionConfig {
     pub prompt_template: String,
     pub provider_id: String,
     pub api_key: String,
+}
+
+/// Load and decrypt the provider API key for (user_id, workspace_id, provider).
+/// Returns error if key not found or decryption fails.
+pub async fn load_provider_api_key(
+    pool: &sqlx::PgPool,
+    enveloper: &std::sync::Arc<crate::secrets::SecretEnveloper>,
+    user_id: uuid::Uuid,
+    workspace_id: uuid::Uuid,
+    provider: &str,
+) -> Result<String, ApiKeyLoadError> {
+    let row = sqlx::query(
+        r#"SELECT key_encrypted, nonce, encrypted_dek, kms_key_id FROM api_keys
+           WHERE user_id = $1 AND workspace_id = $2 AND provider = $3"#,
+    )
+    .bind(user_id)
+    .bind(workspace_id)
+    .bind(provider)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ApiKeyLoadError::Db(e.to_string()))?;
+
+    let row = row.ok_or_else(|| ApiKeyLoadError::NotFound {
+        provider: provider.to_string(),
+    })?;
+
+    let key_encrypted: Vec<u8> = row.try_get("key_encrypted").map_err(|e| ApiKeyLoadError::Db(e.to_string()))?;
+    let nonce: Vec<u8> = row.try_get("nonce").map_err(|e| ApiKeyLoadError::Db(e.to_string()))?;
+    let encrypted_dek: Option<Vec<u8>> = row.try_get("encrypted_dek").ok();
+    let kms_key_id: Option<String> = row.try_get("kms_key_id").ok();
+
+    let context_id = workspace_id.to_string();
+
+    let blob = if let (Some(ed), Some(kid)) = (encrypted_dek, kms_key_id) {
+        crate::secrets::StorageBlob {
+            encrypted_payload: key_encrypted,
+            encrypted_dek: ed,
+            nonce,
+            kms_key_id: kid,
+        }
+    } else {
+        return Err(ApiKeyLoadError::Decrypt(
+            "api key uses legacy encryption; re-store via POST /v1/keys".into(),
+        ));
+    };
+
+    enveloper
+        .unwrap_and_decrypt(&blob, &context_id)
+        .await
+        .map_err(|e| ApiKeyLoadError::Decrypt(e.to_string()))
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ApiKeyLoadError {
+    #[error("db: {0}")]
+    Db(String),
+    #[error("provider key not found: {provider}")]
+    NotFound { provider: String },
+    #[error("decrypt: {0}")]
+    Decrypt(String),
 }
 
 /// Mock DB: returns default config for any function_id. Replace with PostgreSQL when ready.

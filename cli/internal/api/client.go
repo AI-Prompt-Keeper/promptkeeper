@@ -88,13 +88,16 @@ func (c *Client) PutKey(provider, rawSecret string) error {
 }
 
 // PutPrompt stores a prompt template. POST /v1/prompts
-func (c *Client) PutPrompt(name, rawSecret, provider string) error {
+func (c *Client) PutPrompt(name, rawSecret, provider, model string) error {
 	body := map[string]interface{}{
 		"name":       name,
 		"raw_secret": rawSecret,
 	}
 	if provider != "" {
 		body["provider"] = provider
+	}
+	if model != "" {
+		body["preferred_model"] = model
 	}
 	return c.putPromptBody(body)
 }
@@ -117,8 +120,7 @@ func (c *Client) putJSON(path string, body interface{}) error {
 	var result map[string]interface{}
 	_ = json.Unmarshal(data, &result)
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		msg := getErrorMsg(result)
-		return fmt.Errorf("%s: %s", resp.Status, msg)
+		return apiError(resp.Status, getErrorMsg(result))
 	}
 	return nil
 }
@@ -141,21 +143,29 @@ func (c *Client) putPromptBody(body map[string]interface{}) error {
 	var result map[string]interface{}
 	_ = json.Unmarshal(data, &result)
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		msg := getErrorMsg(result)
-		return fmt.Errorf("%s: %s", resp.Status, msg)
+		return apiError(resp.Status, getErrorMsg(result))
 	}
 	return nil
 }
 
+// apiError builds an error from status and message.
+func apiError(status string, msg string) error {
+	return fmt.Errorf("%s: %s", status, msg)
+}
+
 // Execute runs the execute endpoint with streaming. POST /v1/execute
 // StreamWriter is called for each SSE data chunk. For streaming, extract content from provider chunks.
-func (c *Client) Execute(functionID string, variables map[string]interface{}, provider string, streamWriter func(data string) error) error {
+// If debugLog is non-nil, every step is logged to it (e.g. os.Stderr for --debug).
+func (c *Client) Execute(functionID string, variables map[string]interface{}, provider, model string, streamWriter func(data string) error, debugLog io.Writer) error {
 	body := map[string]interface{}{
 		"function_id": functionID,
 		"variables":   variables,
 	}
 	if provider != "" {
 		body["provider"] = provider
+	}
+	if model != "" {
+		body["model"] = model
 	}
 	jsonBody, _ := json.Marshal(body)
 	req, err := http.NewRequest("POST", c.BaseURL+"/v1/execute", bytes.NewReader(jsonBody))
@@ -166,56 +176,131 @@ func (c *Client) Execute(functionID string, variables map[string]interface{}, pr
 		req.Header.Set(k, v)
 	}
 	req.Header.Set("Accept", "text/event-stream")
+
+	if debugLog != nil {
+		fmt.Fprintf(debugLog, "[debug] POST %s/v1/execute\n", c.BaseURL)
+		fmt.Fprintf(debugLog, "[debug] body: %s\n", string(jsonBody))
+		fmt.Fprintf(debugLog, "[debug] auth: Bearer %s...\n", maskToken(c.APIKey))
+	}
+
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
+		if debugLog != nil {
+			fmt.Fprintf(debugLog, "[debug] HTTP error: %v\n", err)
+		}
 		return err
 	}
 	defer resp.Body.Close()
+
+	if debugLog != nil {
+		fmt.Fprintf(debugLog, "[debug] status: %s\n", resp.Status)
+		for k, v := range resp.Header {
+			fmt.Fprintf(debugLog, "[debug] header %s: %s\n", k, strings.Join(v, ", "))
+		}
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(resp.Body)
+		if debugLog != nil {
+			fmt.Fprintf(debugLog, "[debug] non-200 body: %s\n", string(data))
+		}
 		var result map[string]interface{}
 		_ = json.Unmarshal(data, &result)
-		msg := getErrorMsg(result)
-		return fmt.Errorf("%s: %s", resp.Status, msg)
+		return apiError(resp.Status, getErrorMsg(result))
 	}
-	return parseSSEStream(resp.Body, streamWriter)
+
+	return parseSSEStream(resp.Body, streamWriter, debugLog)
+}
+
+func maskToken(s string) string {
+	if len(s) <= 8 {
+		return "***"
+	}
+	return s[:4] + "..." + s[len(s)-4:]
 }
 
 // parseSSEStream reads SSE events and calls streamWriter for each data payload.
 // Extracts content from OpenAI/Anthropic-style chunks and errors.
-func parseSSEStream(r io.Reader, streamWriter func(data string) error) error {
+func parseSSEStream(r io.Reader, streamWriter func(data string) error, debugLog io.Writer) error {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	eventNum := 0
 	for scanner.Scan() {
 		line := scanner.Bytes()
+		if debugLog != nil && bytes.HasPrefix(line, []byte("data: ")) {
+			eventNum++
+			preview := string(line)
+			if len(preview) > 200 {
+				preview = preview[:200] + "..."
+			}
+			fmt.Fprintf(debugLog, "[debug] SSE event #%d: %s\n", eventNum, preview)
+		}
 		if bytes.HasPrefix(line, []byte("data: ")) {
 			data := bytes.TrimSpace(line[6:])
 			if len(data) == 0 {
 				continue
 			}
 			if bytes.Equal(data, []byte("[DONE]")) {
+				if debugLog != nil {
+					fmt.Fprintf(debugLog, "[debug] SSE [DONE]\n")
+				}
 				continue
 			}
 			var parsed map[string]interface{}
 			if err := json.Unmarshal(data, &parsed); err != nil {
+				if debugLog != nil {
+					fmt.Fprintf(debugLog, "[debug] SSE parse error: %v (raw: %s)\n", err, string(data))
+				}
 				continue
 			}
 			if errMsg, ok := parsed["error"].(string); ok && errMsg != "" {
+				if debugLog != nil {
+					fmt.Fprintf(debugLog, "[debug] SSE error event: %s\n", errMsg)
+				}
+				if details, ok := parsed["details"].(string); ok && details != "" {
+					return fmt.Errorf("%s (details: %s)", errMsg, details)
+				}
 				return fmt.Errorf("%s", errMsg)
 			}
 			// Extract content from provider chunks (OpenAI/Anthropic format)
 			content := extractContent(parsed)
 			if content != "" && streamWriter != nil {
+				if debugLog != nil {
+					fmt.Fprintf(debugLog, "[debug] content chunk (%d bytes) -> stdout\n", len(content))
+				}
 				if err := streamWriter(content); err != nil {
+					if debugLog != nil {
+						fmt.Fprintf(debugLog, "[debug] streamWriter error: %v\n", err)
+					}
 					return err
 				}
+			} else if debugLog != nil && len(parsed) > 0 {
+				// Log when we got a valid event but no content extracted (unknown format)
+				fmt.Fprintf(debugLog, "[debug] event with no content extracted, keys: %v\n", mapKeys(parsed))
 			}
 		}
 	}
-	return scanner.Err()
+	err := scanner.Err()
+	if debugLog != nil {
+		fmt.Fprintf(debugLog, "[debug] scanner finished: events=%d, err=%v\n", eventNum, err)
+	}
+	return err
+}
+
+func mapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func extractContent(parsed map[string]interface{}) string {
+	// Backend wraps chunks as {"content": "...", "provider": "..."}
+	if c, ok := parsed["content"].(string); ok && c != "" {
+		return c
+	}
+	// Raw provider format (OpenAI/Anthropic)
 	choices, ok := parsed["choices"].([]interface{})
 	if !ok || len(choices) == 0 {
 		return ""

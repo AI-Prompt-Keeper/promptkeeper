@@ -59,20 +59,22 @@ prke store key openai sk-xxxxx
 
 ### 4. store prompt \<prompt_title\> \<prompt_value|file_path\> [provider]
 
-Store a prompt template. Second argument can be inline text or a file path.
+Store a prompt template. Second argument can be inline text or a file path. Use `--model` to set the preferred LLM model.
 
 ```bash
 prke store prompt my_prompt "Hello {{name}}!" openai
+prke store prompt my_prompt "Hello {{name}}!" openai --model gpt-4o
 prke store prompt my_prompt ./prompt.txt
 ```
 
-### 5. exec \<prompt_title\> [key=value...] [--provider provider]
+### 5. exec \<prompt_title\> [key=value...] [--provider provider] [--model model]
 
-Execute a prompt with streaming output.
+Execute a prompt with streaming output. Use `--model` to override the LLM model for this run.
 
 ```bash
 prke exec my_prompt name=Alice query="What is X?"
 prke exec default name=Bob --provider anthropic
+prke exec default name=Bob --model gpt-4o
 ```
 
 ## Security

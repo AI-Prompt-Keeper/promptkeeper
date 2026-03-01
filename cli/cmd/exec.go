@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -23,20 +24,35 @@ Streams the LLM response to stdout in real-time.`,
 	RunE: runExec,
 }
 
-var execProvider string
+var execProvider, execModel string
+var execDebug bool
 
 func init() {
 	rootCmd.AddCommand(execCmd)
 	execCmd.Flags().StringVar(&execProvider, "provider", "", "Preferred provider (e.g. openai, anthropic)")
+	execCmd.Flags().StringVar(&execModel, "model", "", "LLM model override (e.g. gpt-4o, claude-3-5-sonnet)")
+	execCmd.Flags().BoolVar(&execDebug, "debug", false, "Log every step to stderr for troubleshooting")
 }
 
 func runExec(cmd *cobra.Command, args []string) error {
+	dbg := func(format string, a ...interface{}) {
+		if execDebug {
+			fmt.Fprintf(os.Stderr, "[debug] "+format+"\n", a...)
+		}
+	}
+
 	title := strings.TrimSpace(args[0])
+	dbg("exec start: prompt_title=%q", title)
+
 	if err := validate.ValidatePromptTitle(title); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return err
 	}
 	if err := validate.ValidateProvider(execProvider); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return err
+	}
+	if err := validate.ValidateModel(execModel); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return err
 	}
@@ -63,27 +79,38 @@ func runExec(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return err
 	}
+	dbg("variables: %v", variables)
 
 	cfg, err := config.New()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return err
 	}
+	dbg("config: base_url=%s", cfg.BaseURL())
 
 	token, err := cfg.GetAPIKey()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return err
 	}
+	dbg("api_key: found (%d chars)", len(token))
 
 	client := api.NewClient(cfg.BaseURL(), token)
-	return client.Execute(title, variables, execProvider, func(data string) error {
+	var debugOut io.Writer
+	if execDebug {
+		debugOut = os.Stderr
+	}
+	err = client.Execute(title, variables, execProvider, execModel, func(data string) error {
 		if data != "" {
 			os.Stdout.WriteString(data)
 			os.Stdout.Sync() // flush for real-time streaming
 		}
 		return nil
-	})
+	}, debugOut)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	}
+	return err
 }
 
 func toStringMap(m map[string]interface{}) map[string]string {
