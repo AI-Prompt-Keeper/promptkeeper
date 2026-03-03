@@ -2919,6 +2919,7 @@ dependencies = [
  "aes-gcm",
  "anyhow",
  "argon2",
+ "async-stream",
  "aws-config",
  "aws-sdk-kms",
  "axum",

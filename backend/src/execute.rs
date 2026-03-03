@@ -1,6 +1,7 @@
 //! Execute pipeline: LangChain-based LLM calls with streaming.
 //! Loads provider API keys from api_keys; uses prompt's default provider when request omits provider.
 //! Validates provider is supported and enabled; falls back to backup providers when primary is disabled.
+//! Supports OpenAI, Anthropic, and Google Gemini (via REST API).
 
 use crate::db::{
     format_unsupported_provider_message, get_provider_status, get_supported_providers_list,
@@ -14,6 +15,11 @@ use langchain_rust::language_models::llm::LLM;
 use std::pin::Pin;
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// Unified chunk type for all providers (OpenAI/Anthropic via LangChain, Gemini via REST).
+struct StreamChunk {
+    content: String,
+}
 
 /// Execute state: function store, DB pool, and KMS enveloper for API key decryption.
 #[derive(Clone)]
@@ -165,7 +171,7 @@ pub async fn execute_with_provider(
         ProviderStatus::Available => {}
     }
 
-    if provider != "openai" && provider != "anthropic" {
+    if provider != "openai" && provider != "anthropic" && provider != "gemini" {
         let list = get_supported_providers_list(&state.db)
             .await
             .unwrap_or_default();
@@ -194,41 +200,72 @@ pub async fn execute_with_provider(
         rendered.to_string(),
     )];
 
-    let stream = match provider.as_str() {
-        "openai" => {
-            let config = langchain_rust::llm::OpenAIConfig::default().with_api_key(api_key);
-            let mut openai = langchain_rust::llm::openai::OpenAI::default().with_config(config);
-            if let Some(ref m) = model {
-                openai = openai.with_model(m.clone());
+    let stream: Pin<Box<dyn Stream<Item = Result<StreamChunk, ExecuteError>> + Send>> =
+        match provider.as_str() {
+            "openai" => {
+                let config = langchain_rust::llm::OpenAIConfig::default().with_api_key(api_key);
+                let mut openai = langchain_rust::llm::openai::OpenAI::default().with_config(config);
+                if let Some(ref m) = model {
+                    openai = openai.with_model(m.clone());
+                }
+                let s = openai.stream(&messages).await.map_err(|e| {
+                    let msg = e.to_string();
+                    ExecuteError::ProviderError {
+                        provider: provider.clone(),
+                        message: msg,
+                        details: Some(format!("{:?}", e)),
+                    }
+                })?;
+                let p = provider.clone();
+                Box::pin(s.map(move |r| {
+                    r.map(|d| StreamChunk {
+                        content: d.content,
+                    })
+                    .map_err(|e| ExecuteError::ProviderError {
+                        provider: p.clone(),
+                        message: e.to_string(),
+                        details: Some(format!("{:?}", e)),
+                    })
+                }))
             }
-            openai.stream(&messages).await
-        }
-        "anthropic" => {
-            let mut claude = langchain_rust::llm::Claude::default().with_api_key(api_key);
-            if let Some(ref m) = model {
-                claude = claude.with_model(m.clone());
+            "anthropic" => {
+                let mut claude = langchain_rust::llm::Claude::default().with_api_key(api_key);
+                if let Some(ref m) = model {
+                    claude = claude.with_model(m.clone());
+                }
+                let s = claude.stream(&messages).await.map_err(|e| {
+                    let msg = e.to_string();
+                    ExecuteError::ProviderError {
+                        provider: provider.clone(),
+                        message: msg,
+                        details: Some(format!("{:?}", e)),
+                    }
+                })?;
+                let p = provider.clone();
+                Box::pin(s.map(move |r| {
+                    r.map(|d| StreamChunk {
+                        content: d.content,
+                    })
+                    .map_err(|e| ExecuteError::ProviderError {
+                        provider: p.clone(),
+                        message: e.to_string(),
+                        details: Some(format!("{:?}", e)),
+                    })
+                }))
             }
-            claude.stream(&messages).await
-        }
-        _ => {
-            let list = get_supported_providers_list(&state.db)
-                .await
-                .unwrap_or_default();
-            return Err(ExecuteError::UnsupportedProvider(
-                format_unsupported_provider_message(&provider, &list),
-            ));
-        }
-    };
-
-    let stream = stream.map_err(|e| {
-        let msg = e.to_string();
-        let details = format!("{:?}", e);
-        ExecuteError::ProviderError {
-            provider: provider.clone(),
-            message: msg,
-            details: Some(details),
-        }
-    })?;
+            "gemini" => {
+                let gemini_stream = stream_gemini(rendered, &api_key, model.as_deref(), &provider)?;
+                Box::pin(gemini_stream)
+            }
+            _ => {
+                let list = get_supported_providers_list(&state.db)
+                    .await
+                    .unwrap_or_default();
+                return Err(ExecuteError::UnsupportedProvider(
+                    format_unsupported_provider_message(&provider, &list),
+                ));
+            }
+        };
 
     let provider_owned = provider.clone();
     let s = stream.map(move |chunk_result| {
@@ -261,6 +298,112 @@ pub async fn execute_with_provider(
     });
 
     Ok(Box::pin(s))
+}
+
+/// Stream completion from Google Gemini API (Generative Language API).
+fn stream_gemini(
+    prompt: &str,
+    api_key: &str,
+    model: Option<&str>,
+    provider: &str,
+) -> Result<
+    Pin<Box<dyn Stream<Item = Result<StreamChunk, ExecuteError>> + Send>>,
+    ExecuteError,
+> {
+    let model = model
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("gemini-2.0-flash");
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse",
+        model
+    );
+    let body = serde_json::json!({
+        "contents": [{ "parts": [{ "text": prompt }] }]
+    });
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| ExecuteError::Other(e.to_string()))?;
+
+    let req = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("x-goog-api-key", api_key)
+        .body(body.to_string());
+
+    let provider_owned = provider.to_string();
+    let stream = async_stream::stream! {
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                yield Err(ExecuteError::ProviderError {
+                    provider: provider_owned.clone(),
+                    message: e.to_string(),
+                    details: None,
+                });
+                return;
+            }
+        };
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            yield Err(ExecuteError::ProviderError {
+                provider: provider_owned.clone(),
+                message: format!("{}: {}", status, body),
+                details: None,
+            });
+            return;
+        }
+        let mut bytes_stream = resp.bytes_stream();
+        let mut buf = Vec::new();
+        use futures_util::StreamExt as _;
+        while let Some(chunk) = bytes_stream.next().await {
+            let chunk = match chunk {
+                Ok(c) => c,
+                Err(e) => {
+                    yield Err(ExecuteError::ProviderError {
+                        provider: provider_owned.clone(),
+                        message: e.to_string(),
+                        details: None,
+                    });
+                    return;
+                }
+            };
+            buf.extend_from_slice(&chunk);
+            while let Some(i) = buf.iter().position(|&b| b == b'\n') {
+                let line = buf.drain(..=i).collect::<Vec<_>>();
+                let line = String::from_utf8_lossy(&line);
+                let line = line.trim();
+                if let Some(data) = line.strip_prefix("data: ") {
+                    if data == "[DONE]" || data.is_empty() {
+                        continue;
+                    }
+                    let parsed: serde_json::Value = match serde_json::from_str(data) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    let text = parsed
+                        .get("candidates")
+                        .and_then(|c| c.get(0))
+                        .and_then(|c| c.get("content"))
+                        .and_then(|c| c.get("parts"))
+                        .and_then(|p| p.get(0))
+                        .and_then(|p| p.get("text"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    if !text.is_empty() {
+                        yield Ok(StreamChunk {
+                            content: text.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    };
+
+    Ok(Box::pin(stream))
 }
 
 /// Execute: resolve function, render prompt, try primary then backup providers until one succeeds.

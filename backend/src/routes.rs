@@ -37,7 +37,7 @@ pub mod request {
         pub function_id: String,
         #[serde(default)]
         pub variables: HashMap<String, serde_json::Value>,
-        /// Optional: prefer this provider (e.g. "openai", "anthropic") for this request.
+        /// Optional: prefer this provider (e.g. "openai", "anthropic", "gemini") for this request.
         pub provider: Option<String>,
         /// Optional: model override. Takes precedence over prompt version default. If omitted everywhere, provider chooses.
         pub model: Option<String>,

@@ -10,7 +10,7 @@ All request/response bodies that are JSON use `Content-Type: application/json` u
 
 ### 1. Execute (LLM proxy with streaming)
 
-Runs the execute pipeline: resolves function config, renders the prompt with variables, forwards to the configured LLM provider (OpenAI/Anthropic), and streams the response back as Server-Sent Events.
+Runs the execute pipeline: resolves function config, renders the prompt with variables, forwards to the configured LLM provider (OpenAI, Anthropic, or Google Gemini), and streams the response back as Server-Sent Events.
 
 | Property | Value |
 |----------|--------|
@@ -47,7 +47,7 @@ Runs the execute pipeline: resolves function config, renders the prompt with var
 
 | Name | Type | Description |
 |------|------|-------------|
-| (stream) | SSE events | A stream of Server-Sent Events. Each event has a `data` field. Success: `data` contains provider payload (e.g. OpenAI/Anthropic stream chunk). Events are sent until the provider closes the stream. |
+| (stream) | SSE events | A stream of Server-Sent Events. Each event has a `data` field. Success: `data` contains provider payload (e.g. OpenAI/Anthropic/Gemini stream chunk). Events are sent until the provider closes the stream. |
 
 #### Return value (error)
 
@@ -71,7 +71,7 @@ When the request is invalid or execute fails, the response is still SSE: a singl
 
 ### 2a. Put key (store provider API key)
 
-Stores a provider API key (e.g. OpenAI, Anthropic). Uses envelope encryption (DEK + KMS). Raw secret is never logged. Requires KMS and auth.
+Stores a provider API key (e.g. OpenAI, Anthropic, Google Gemini). Uses envelope encryption (DEK + KMS). Raw secret is never logged. Requires KMS and auth.
 
 | Property | Value |
 |----------|--------|
@@ -85,7 +85,7 @@ Stores a provider API key (e.g. OpenAI, Anthropic). Uses envelope encryption (DE
 | Name | Type | Mandatory | Description |
 |------|------|-----------|-------------|
 | `raw_secret` | string | Yes | Raw API key. Never logged. |
-| `provider` | string | Yes | Provider (e.g. `"openai"`, `"anthropic"`). |
+| `provider` | string | Yes | Provider (e.g. `"openai"`, `"anthropic"`, `"gemini"`). |
 
 **Example request body:**
 

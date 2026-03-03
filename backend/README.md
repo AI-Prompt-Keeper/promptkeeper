@@ -66,7 +66,7 @@ All JSON endpoints use `Content-Type: application/json` unless noted. Error resp
 
 ### 1. Execute — LLM proxy with streaming
 
-Runs the execute pipeline: resolves function config, renders the prompt with variables (Handlebars), forwards to the configured LLM provider (OpenAI/Anthropic), and streams the response as Server-Sent Events.
+Runs the execute pipeline: resolves function config, renders the prompt with variables (Handlebars), forwards to the configured LLM provider (OpenAI, Anthropic, or Google Gemini), and streams the response as Server-Sent Events.
 
 | Property | Value |
 |----------|--------|
@@ -84,7 +84,7 @@ Runs the execute pipeline: resolves function config, renders the prompt with var
 
 **Auth:** Requires `Authorization: Bearer <api_token>` or `X-API-Key: <api_token>`. Use the API key returned at registration (e.g. `pk_...`) or a session token from login.
 | `variables` | object | No | Map of variable names to JSON values. Injected into the Handlebars prompt template. Default: `{}`. |
-| `provider` | string | No | Preferred provider (e.g. `"openai"`, `"anthropic"`). If in the function's provider list, tried first. |
+| `provider` | string | No | Preferred provider (e.g. `"openai"`, `"anthropic"`, `"gemini"`). If in the function's provider list, tried first. |
 
 **Example request:**
 ```json
@@ -98,7 +98,7 @@ Runs the execute pipeline: resolves function config, renders the prompt with var
 }
 ```
 
-**Success response:** SSE stream. Each event has a `data` field containing provider payload (e.g. OpenAI/Anthropic stream chunks). Stream continues until the provider closes.
+**Success response:** SSE stream. Each event has a `data` field containing provider payload (e.g. OpenAI/Anthropic/Gemini stream chunks). Stream continues until the provider closes.
 
 **Error response:** SSE stream with a single event whose `data` is JSON:
 ```json
@@ -111,7 +111,7 @@ Common errors: parse failure, function not found, provider error, timeout (`"exe
 
 ### 2a. Put key — store provider API key
 
-Stores a provider API key (e.g. OpenAI, Anthropic). Uses envelope encryption (DEK + KMS). Raw secret is never logged. Requires KMS and auth.
+Stores a provider API key (e.g. OpenAI, Anthropic, Google Gemini). Uses envelope encryption (DEK + KMS). Raw secret is never logged. Requires KMS and auth.
 
 **Auth:** Requires `Authorization: Bearer <api_token>` or `X-API-Key: <api_token>`.
 
@@ -127,7 +127,7 @@ Stores a provider API key (e.g. OpenAI, Anthropic). Uses envelope encryption (DE
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `raw_secret` | string | Yes | Raw API key. Never logged; zeroized after use. |
-| `provider` | string | Yes | Provider name (e.g. `"openai"`, `"anthropic"`). |
+| `provider` | string | Yes | Provider name (e.g. `"openai"`, `"anthropic"`, `"gemini"`). |
 
 **Example:**
 ```json
@@ -160,7 +160,7 @@ Stores a prompt template for a named function. Uses envelope encryption. Raw sec
 |-----------|------|----------|-------------|
 | `name` | string | Yes | Function/prompt name (e.g. `"customer_support"`). |
 | `raw_secret` | string | Yes | Raw prompt template (e.g. Handlebars). Never logged. |
-| `provider` | string | No | Optional default provider (e.g. `"openai"`) when creating a new function. |
+| `provider` | string | No | Optional default provider (e.g. `"openai"`, `"gemini"`) when creating a new function. |
 
 **Example:**
 ```json

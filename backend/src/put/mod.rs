@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
-/// Request body for POST /v1/keys. Stores provider API key (openai, anthropic, etc.).
+/// Request body for POST /v1/keys. Stores provider API key (openai, anthropic, gemini, etc.).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PutKeyRequestBody {
@@ -31,7 +31,7 @@ pub struct PutPromptRequestBody {
     /// Raw prompt template (e.g. Handlebars). Never logged; zeroized after use.
     #[serde(deserialize_with = "deserialize_secret")]
     pub raw_secret: Zeroizing<String>,
-    /// Optional: default provider for this prompt (e.g. "openai", "anthropic").
+    /// Optional: default provider for this prompt (e.g. "openai", "anthropic", "gemini").
     pub provider: Option<String>,
     /// Optional: preferred model for this version (e.g. "gpt-4o", "claude-3-5-sonnet-20240620").
     pub preferred_model: Option<String>,
