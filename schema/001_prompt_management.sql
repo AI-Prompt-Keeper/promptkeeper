@@ -142,7 +142,8 @@ CREATE TRIGGER trigger_prompt_versions_immutable
 -- -----------------------------------------------------------------------------
 INSERT INTO supported_providers (provider, supported, enabled) VALUES
     ('openai', true, true),
-    ('anthropic', true, true)
+    ('anthropic', true, true),
+    ('gemini', true, true)
 ON CONFLICT (provider) DO NOTHING;
 
 -- -----------------------------------------------------------------------------

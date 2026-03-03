@@ -34,6 +34,11 @@ temp_mds/
 secrets/
 *.pem
 *.key
+credentials.json
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
 
 # --- Rust (Cargo) ---
 /target/
@@ -90,9 +95,44 @@ docker-compose.override.yaml
 *.sqlite3
 
 # --- Project docs (local/review) ---
+.autopilot.json
 schema/APPLY_STEPS.md
 schema/REVIEW.md
 schema/BACKEND_INTEGRATION.md
+
+# --- Android (Gradle) ---
+.gradle/
+local.properties
+*.iml
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.hprof
+gen/
+.kotlin/
+
+# --- iOS / Xcode / Swift ---
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+Carthage/Build
+Pods/
+.swiftpm/
+*.xccheckout
+*.xcscmblueprint
 
 # --- Misc ---
 *.pyc
