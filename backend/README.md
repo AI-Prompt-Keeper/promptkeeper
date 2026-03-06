@@ -8,6 +8,7 @@ Self-contained Rust service: LLM proxy (execute), envelope encryption (Put), aut
 - **`src/`** — application source
 - **`backend-specs.md`** — detailed API reference (endpoints, request/response schemas)
 - **`Dockerfile`** — image for local dev (build context from repo root)
+- **`Dockerfile.release`** — production image for Fly.io (multi-stage Rust build)
 
 ## Build and run
 
@@ -35,6 +36,14 @@ cd backend && STATIC_DIR=../frontend cargo run
 **Schema:** Run `schema/001_prompt_management.sql`, `002_auth_and_workspaces.sql`, `003_api_tokens.sql` (in order). 001 includes functions, prompt_versions, deployments for Put/Execute.
 
 See the repo root **DEPLOY.md** for full local deployment (DB, env vars, Docker).
+
+## Deploy to Fly.io
+
+From repo root: `fly deploy` (uses `fly.toml` and `backend/Dockerfile.release`). First-time setup:
+
+1. **Create app (if needed):** `fly launch --no-deploy` then edit `fly.toml` as needed.
+2. **Secrets:** `fly secrets set DATABASE_URL="postgres://..."` (and optionally `KMS_KEY_ID`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`).
+3. **CI:** Pushes to `main` deploy via GitHub Actions (`.github/workflows/fly-deploy.yml`). Add repository secret `FLY_API_TOKEN` from `fly tokens create deploy -x 999999h`.
 
 ## Tests
 

@@ -1,0 +1,43 @@
+# Fly.io app config — Prompt Keeper backend
+# Deploy: fly deploy (from repo root). CI: deploy on push to main (see .github/workflows/fly-deploy.yml).
+# Before first deploy: fly secrets set DATABASE_URL="postgres://..." (and optionally KMS_KEY_ID, AWS_*).
+
+app = "promptkeeper"
+
+[build]
+  dockerfile = "backend/Dockerfile.release"
+  # Build context is repo root by default
+
+[env]
+  # STATIC_DIR optional; omit to serve only API. Set if you bake frontend into image later.
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 80
+    hard_limit = 100
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+[deploy]
+  strategy = "rolling"
+  wait_timeout = "10m"
+
+kill_signal = "SIGTERM"
+kill_timeout = 30
+
+# Machine size (optional; uncomment to pin)
+# [[vm]]
+#   size = "shared-cpu-1x"
+#   memory = "512mb"
