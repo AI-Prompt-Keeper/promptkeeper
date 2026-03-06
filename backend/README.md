@@ -8,6 +8,7 @@ Self-contained Rust service: LLM proxy (execute), envelope encryption (Put), aut
 - **`src/`** — application source
 - **`backend-specs.md`** — detailed API reference (endpoints, request/response schemas)
 - **`Dockerfile`** — image for local dev (build context from repo root)
+- **`Dockerfile.release`** — production image for Fly.io (multi-stage Rust build)
 
 ## Build and run
 
@@ -35,6 +36,25 @@ cd backend && STATIC_DIR=../frontend cargo run
 **Schema:** Run `schema/001_prompt_management.sql`, `002_auth_and_workspaces.sql`, `003_api_tokens.sql` (in order). 001 includes functions, prompt_versions, deployments for Put/Execute.
 
 See the repo root **DEPLOY.md** for full local deployment (DB, env vars, Docker).
+
+## Deploy to Fly.io
+
+From repo root: `fly deploy` (uses `fly.toml` and `backend/Dockerfile.release`). The backend **requires Postgres**; you can use Fly’s managed Postgres or an external database.
+
+**First-time setup:**
+
+1. **Create app:** `fly launch --no-deploy` then edit `fly.toml` as needed.
+   - When asked “Do you want to tweak these settings?”, choose **Yes** if you want to add **Postgres** now (Fly will create a Postgres app and set `DATABASE_URL` for you). Choosing **No** is fine — you can add Postgres later (step 2).
+2. **Postgres (if not added at launch):**
+   - **Option A — Fly Postgres:** Create a cluster and attach it to your app (this sets `DATABASE_URL` automatically):
+     ```bash
+     fly postgres create
+     fly postgres attach <postgres-app-name> --app promptkeeper
+     ```
+   - **Option B — External DB:** Set the secret yourself: `fly secrets set DATABASE_URL="postgres://user:pass@host:5432/dbname"`.
+   - After attaching Fly Postgres or using an external DB, run the schema migrations (e.g. from a one-off machine or locally against the same URL): `schema/001_prompt_management.sql`, `002_auth_and_workspaces.sql`, `003_api_tokens.sql`.
+3. **Other secrets (optional):** `fly secrets set KMS_KEY_ID=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_REGION=...` for envelope encryption.
+4. **CI:** Pushes to `main` deploy via GitHub Actions (`.github/workflows/fly-deploy.yml`). Add repository secret `FLY_API_TOKEN` from `fly tokens create deploy -x 999999h`.
 
 ## Tests
 
