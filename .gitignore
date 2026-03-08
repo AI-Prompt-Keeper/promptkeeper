@@ -31,7 +31,8 @@ temp_mds/
 .env.*
 !.env.example
 *.local
-secrets/
+# Only ignore repo-root secrets dir (e.g. credential files), not backend/src/secrets (Rust module)
+/secrets/
 *.pem
 *.key
 credentials.json
