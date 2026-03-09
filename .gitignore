@@ -48,6 +48,8 @@ credentials.json
 
 # --- Go ---
 # Binaries
+prke
+cli/prke
 *.exe
 *.exe~
 *.dll

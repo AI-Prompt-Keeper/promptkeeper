@@ -1,19 +1,19 @@
 # Production image for Fly.io: multi-stage Rust build, minimal runtime.
-# Build context: repo root (fly deploy from repo root).
-# Usage: fly deploy (fly.toml points to this file).
+# Build context: backend/ (this directory). Deploy: cd backend && fly deploy.
+# Usage: fly deploy with fly.toml in this directory.
 
 # --- Builder ---
 FROM rust:1-bookworm AS builder
 WORKDIR /app
 
 # Cache dependencies: copy manifests and dummy source, then build
-COPY backend/Cargo.toml backend/Cargo.lock ./
+COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs \
     && cargo build --release \
     && rm -rf src
 
 # Build real binary
-COPY backend/src ./src
+COPY src ./src
 RUN touch src/main.rs && cargo build --release
 
 # --- Runtime ---

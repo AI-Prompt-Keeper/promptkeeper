@@ -1,20 +1,47 @@
-# fly.toml app configuration file generated for backend-red-sun-3363 on 2026-03-06T17:59:58Z
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
+# Fly.io app config — Prompt Keeper backend
+# Deploy from backend dir: fly deploy (or cd backend && fly deploy from repo root).
+# CI: deploy on push to main (see .github/workflows/fly-deploy.yml).
+# Before first deploy: backend requires Postgres. Use Fly Postgres (add at fly launch or later:
+#   fly postgres create && fly postgres attach <postgres-app-name> --app promptkeeper)
+# or set DATABASE_URL yourself: fly secrets set DATABASE_URL="postgres://...". Optionally: KMS_KEY_ID, AWS_*.
 
-app = 'backend-red-sun-3363'
-primary_region = 'iad'
+app = "promptkeeper-ejl0kg"
+org = "personal"
+primary_region = "iad"
 
 [build]
+  dockerfile = "Dockerfile.release"
+  # Build context is backend/ (this directory)
+
+[env]
+  # STATIC_DIR optional; omit to serve only API. Set if you bake frontend into image later.
 
 [http_service]
-  internal_port = 8080
+  internal_port = 3000
   force_https = true
-  auto_stop_machines = 'stop'
+  auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 0
-  processes = ['app']
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 80
+    hard_limit = 100
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+[deploy]
+  strategy = "rolling"
+  wait_timeout = "10m"
+
+kill_signal = "SIGTERM"
+kill_timeout = 30
 
 [[vm]]
   memory = '1gb'

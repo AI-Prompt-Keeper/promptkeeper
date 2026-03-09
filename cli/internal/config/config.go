@@ -14,7 +14,7 @@ const (
 	KeyUser     = "api_key"
 	ConfigKey   = "vault_access_token"
 	BaseURLKey  = "base_url"
-	DefaultURL  = "http://localhost:3000"
+	DefaultURL  = "https://api.promptkeeper.com"
 )
 
 // Config manages viper config file and optional system keyring.

@@ -24,11 +24,11 @@ make build-all
 Config file: `~/.pv-config.yaml`
 
 ```yaml
-base_url: "http://localhost:3000"
+base_url: "https://api.promptkeeper.com"
 vault_access_token: "pk_..."   # API key (also stored in system keyring when possible)
 ```
 
-- **base_url**: API base URL (default: `http://localhost:3000`)
+- **base_url**: API base URL (default: `https://api.promptkeeper.com`)
 - **vault_access_token**: Your API key. Stored in system keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service) when available; otherwise in this file.
 
 ## Commands
