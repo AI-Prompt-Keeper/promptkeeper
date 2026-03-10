@@ -189,7 +189,7 @@ class PromptKeeper internal constructor(
     }
 
     companion object {
-        const val DEFAULT_BASE_URL = "http://localhost:3000"
+        const val DEFAULT_BASE_URL = "https://api.promptkeeper.ai"
 
         @Volatile
         private var defaultInstance: PromptKeeper? = null

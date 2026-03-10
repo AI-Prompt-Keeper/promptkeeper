@@ -18,7 +18,7 @@ public final class PromptKeeper {
     /// Creates and configures the SDK with an API key.
     /// - Parameter apiKey: API key obtained from your backend (e.g. after registration). Stored in-memory only for this app run.
     public init(apiKey: String) {
-        self.baseURL = URL(string: "http://localhost:3000")!
+        self.baseURL = URL(string: "https://api.promptkeeper.ai")!
         self.apiKeyHolder = APIKeyHolder(apiKey: apiKey)
         self.session = URLSession.shared
     }

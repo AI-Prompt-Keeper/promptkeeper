@@ -1,6 +1,6 @@
 # PromptKeeper Swift SDK
 
-Swift package for the [Prompt Keeper](https://github.com/your-org/promptkeeper) backend. Use it to store provider API keys, prompt templates, and execute LLM functions with streaming responses.
+Swift package for the [Prompt Keeper](https://github.com/your-org/promptkeeper) backend at **https://api.promptkeeper.ai**. Use it to store provider API keys, prompt templates, and execute LLM functions with streaming responses.
 
 **Requirements:** You must obtain an API key (e.g. via your backend's registration flow) before using this SDK. This package does not implement register or login.
 

@@ -1,6 +1,6 @@
 # PromptKeeper Android SDK
 
-Kotlin/Android SDK for the [Prompt Keeper](https://github.com/promptkeeper/promptkeeper) API. Supports **init** (in-memory API key), **setKey**, **setPrompt**, and **exec** (streaming). Register and obtain an API key outside this SDK; the SDK does not handle registration or login.
+Kotlin/Android SDK for the [Prompt Keeper](https://github.com/promptkeeper/promptkeeper) API at **https://api.promptkeeper.ai**. Supports **init** (in-memory API key), **setKey**, **setPrompt**, and **exec** (streaming). Register and obtain an API key outside this SDK; the SDK does not handle registration or login.
 
 ## Requirements
 
