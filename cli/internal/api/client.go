@@ -16,6 +16,8 @@ type Client struct {
 	BaseURL    string
 	APIKey     string
 	HTTPClient *http.Client
+	// DebugLog: when set, request URL and response body are written here (e.g. os.Stderr for --debug).
+	DebugLog io.Writer
 }
 
 // NewClient creates an API client.
@@ -51,12 +53,23 @@ func (c *Client) Register(email, password, name string) (map[string]interface{},
 		body["name"] = name
 	}
 	jsonBody, _ := json.Marshal(body)
-	req, err := http.NewRequest("POST", c.BaseURL+"/v1/auth/register", bytes.NewReader(jsonBody))
+	url := c.BaseURL + "/v1/auth/register"
+	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, err
 	}
 	for k, v := range c.authHeaders() {
 		req.Header.Set(k, v)
+	}
+	if c.DebugLog != nil {
+		fmt.Fprintf(c.DebugLog, "[debug] POST %s\n", url)
+		// Redact password in request log
+		logBody := map[string]interface{}{"email": email, "password": "[REDACTED]"}
+		if name != "" {
+			logBody["name"] = name
+		}
+		logJSON, _ := json.Marshal(logBody)
+		fmt.Fprintf(c.DebugLog, "[debug] request body: %s\n", string(logJSON))
 	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -66,6 +79,10 @@ func (c *Client) Register(email, password, name string) (map[string]interface{},
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+	if c.DebugLog != nil {
+		fmt.Fprintf(c.DebugLog, "[debug] response status: %s\n", resp.Status)
+		fmt.Fprintf(c.DebugLog, "[debug] response body: %s\n", string(data))
 	}
 	var result map[string]interface{}
 	if err := json.Unmarshal(data, &result); err != nil {
@@ -84,7 +101,7 @@ func (c *Client) PutKey(provider, rawSecret string) error {
 		"raw_secret": rawSecret,
 		"provider":   provider,
 	}
-	return c.putJSON("/v1/keys", body)
+	return c.putJSON("/v1/keys", body, map[string]string{"raw_secret": "[REDACTED]"})
 }
 
 // PutPrompt stores a prompt template. POST /v1/prompts
@@ -102,14 +119,21 @@ func (c *Client) PutPrompt(name, rawSecret, provider, model string) error {
 	return c.putPromptBody(body)
 }
 
-func (c *Client) putJSON(path string, body interface{}) error {
+// putJSON sends POST with body. For debug logging, bodyForLog can be a redacted copy of body (e.g. redact raw_secret).
+func (c *Client) putJSON(path string, body interface{}, bodyForLog map[string]string) error {
 	jsonBody, _ := json.Marshal(body)
-	req, err := http.NewRequest("POST", c.BaseURL+path, bytes.NewReader(jsonBody))
+	url := c.BaseURL + path
+	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return err
 	}
 	for k, v := range c.authHeaders() {
 		req.Header.Set(k, v)
+	}
+	if c.DebugLog != nil && bodyForLog != nil {
+		logBody, _ := json.Marshal(bodyForLog)
+		fmt.Fprintf(c.DebugLog, "[debug] POST %s\n", url)
+		fmt.Fprintf(c.DebugLog, "[debug] request body: %s\n", string(logBody))
 	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -117,6 +141,10 @@ func (c *Client) putJSON(path string, body interface{}) error {
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
+	if c.DebugLog != nil {
+		fmt.Fprintf(c.DebugLog, "[debug] response status: %s\n", resp.Status)
+		fmt.Fprintf(c.DebugLog, "[debug] response body: %s\n", string(data))
+	}
 	var result map[string]interface{}
 	_ = json.Unmarshal(data, &result)
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
@@ -127,12 +155,26 @@ func (c *Client) putJSON(path string, body interface{}) error {
 
 func (c *Client) putPromptBody(body map[string]interface{}) error {
 	jsonBody, _ := json.Marshal(body)
-	req, err := http.NewRequest("POST", c.BaseURL+"/v1/prompts", bytes.NewReader(jsonBody))
+	url := c.BaseURL + "/v1/prompts"
+	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return err
 	}
 	for k, v := range c.authHeaders() {
 		req.Header.Set(k, v)
+	}
+	if c.DebugLog != nil {
+		logBody := make(map[string]interface{})
+		for k, v := range body {
+			if k == "raw_secret" {
+				logBody[k] = "[REDACTED]"
+			} else {
+				logBody[k] = v
+			}
+		}
+		logJSON, _ := json.Marshal(logBody)
+		fmt.Fprintf(c.DebugLog, "[debug] POST %s\n", url)
+		fmt.Fprintf(c.DebugLog, "[debug] request body: %s\n", string(logJSON))
 	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -140,6 +182,10 @@ func (c *Client) putPromptBody(body map[string]interface{}) error {
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(resp.Body)
+	if c.DebugLog != nil {
+		fmt.Fprintf(c.DebugLog, "[debug] response status: %s\n", resp.Status)
+		fmt.Fprintf(c.DebugLog, "[debug] response body: %s\n", string(data))
+	}
 	var result map[string]interface{}
 	_ = json.Unmarshal(data, &result)
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
@@ -229,11 +275,7 @@ func parseSSEStream(r io.Reader, streamWriter func(data string) error, debugLog 
 		line := scanner.Bytes()
 		if debugLog != nil && bytes.HasPrefix(line, []byte("data: ")) {
 			eventNum++
-			preview := string(line)
-			if len(preview) > 200 {
-				preview = preview[:200] + "..."
-			}
-			fmt.Fprintf(debugLog, "[debug] SSE event #%d: %s\n", eventNum, preview)
+			fmt.Fprintf(debugLog, "[debug] SSE event #%d (raw): %s\n", eventNum, string(line))
 		}
 		if bytes.HasPrefix(line, []byte("data: ")) {
 			data := bytes.TrimSpace(line[6:])

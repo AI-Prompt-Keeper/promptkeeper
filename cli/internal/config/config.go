@@ -12,78 +12,78 @@ import (
 const (
 	ServiceName = "promptkeeper"
 	KeyUser     = "api_key"
-	ConfigKey   = "vault_access_token"
 	BaseURLKey  = "base_url"
-	DefaultURL  = "https://api.promptkeeper.com"
+	DefaultURL  = "https://api.promptkeeper.ai"
 )
 
 // Config manages viper config file and optional system keyring.
+// When useLocalConfig is false, ~/.prke-config.yaml is not read or written.
 type Config struct {
-	v *viper.Viper
+	v              *viper.Viper
+	useLocalConfig bool
 }
 
-// New creates and initializes config. Config file: ~/.pv-config.yaml
-func New() (*Config, error) {
+// New creates and initializes config. When useLocalConfig is true, reads ~/.prke-config.yaml.
+// When false, only env (PKRE_BASE_URL) and default URL are used for base URL; API key from keyring only.
+func New(useLocalConfig bool) (*Config, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("cannot get home dir: %w", err)
 	}
-	configPath := filepath.Join(home, ".pv-config.yaml")
+	configPath := filepath.Join(home, ".prke-config.yaml")
 
 	v := viper.New()
 	v.SetConfigFile(configPath)
 	v.SetConfigType("yaml")
 	v.SetDefault(BaseURLKey, DefaultURL)
-	_ = v.ReadInConfig() // ignore if file does not exist
+	if useLocalConfig {
+		_ = v.ReadInConfig() // ignore if file does not exist
+	}
 
-	return &Config{v: v}, nil
+	return &Config{v: v, useLocalConfig: useLocalConfig}, nil
 }
 
-// BaseURL returns the API base URL (env PKRE_BASE_URL overrides config).
+// BaseURL returns the API base URL. When useLocalConfig is false: env PKRE_BASE_URL else default.
+// When true: env overrides, then config file, then default.
 func (c *Config) BaseURL() string {
 	if u := os.Getenv("PKRE_BASE_URL"); u != "" {
 		return u
 	}
-	url := c.v.GetString(BaseURLKey)
-	if url == "" {
-		return DefaultURL
+	if c.useLocalConfig {
+		url := c.v.GetString(BaseURLKey)
+		if url != "" {
+			return url
+		}
 	}
-	return url
+	return DefaultURL
 }
 
-// SetBaseURL stores the base URL in config.
+// SetBaseURL stores the base URL in config (only persisted when useLocalConfig).
 func (c *Config) SetBaseURL(url string) error {
 	c.v.Set(BaseURLKey, url)
-	return c.v.WriteConfigAs(c.v.ConfigFileUsed())
+	if !c.useLocalConfig {
+		return nil
+	}
+	return c.writeConfig()
 }
 
-// GetAPIKey returns api_key from system keyring first, then config file fallback.
+// GetAPIKey returns api_key from system keyring only (never from config file, to avoid exposing secrets on disk).
 func (c *Config) GetAPIKey() (string, error) {
-	// Try keyring first (more secure)
 	token, err := keyring.Get(ServiceName, KeyUser)
 	if err == nil && token != "" {
-		return token, nil
-	}
-	// Fallback to config file
-	token = c.v.GetString(ConfigKey)
-	if token != "" {
 		return token, nil
 	}
 	return "", fmt.Errorf("no API key found: run 'prke register' or 'prke set prke_key <key>'")
 }
 
-// SetAPIKey stores api_key in system keyring and config file (viper).
+// SetAPIKey stores api_key in system keyring only. Config file is not used for the token.
 func (c *Config) SetAPIKey(apiKey string) error {
-	_ = keyring.Set(ServiceName, KeyUser, apiKey) // best-effort; may fail on headless
-	c.v.Set(ConfigKey, apiKey)
-	return c.writeConfig()
+	return keyring.Set(ServiceName, KeyUser, apiKey)
 }
 
-// DeleteAPIKey removes api_key from keyring and config.
+// DeleteAPIKey removes api_key from system keyring only.
 func (c *Config) DeleteAPIKey() error {
-	_ = keyring.Delete(ServiceName, KeyUser)
-	c.v.Set(ConfigKey, "")
-	return c.writeConfig()
+	return keyring.Delete(ServiceName, KeyUser)
 }
 
 func (c *Config) writeConfig() error {
@@ -93,7 +93,7 @@ func (c *Config) writeConfig() error {
 		if err != nil {
 			return err
 		}
-		path = filepath.Join(home, ".pv-config.yaml")
+		path = filepath.Join(home, ".prke-config.yaml")
 		c.v.SetConfigFile(path)
 	}
 	dir := filepath.Dir(path)

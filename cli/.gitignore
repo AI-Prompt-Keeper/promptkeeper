@@ -1,0 +1,5 @@
+# Go build cache (local to this module)
+.gomodcache/
+
+# Compiled binary
+prke

@@ -6,20 +6,21 @@ import (
 	"strings"
 
 	"github.com/promptkeeper/cli/internal/config"
+	"github.com/promptkeeper/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
 var setCmd = &cobra.Command{
 	Use:   "set",
 	Short: "Set configuration values",
-	Long:  "Store configuration in the system vault and ~/.pv-config.yaml",
+	Long:  "Store the API key in the system vault (keyring) only. Config file is not used for the token.",
 }
 
 var setPkreKeyCmd = &cobra.Command{
-	Use:   "prke_key <key>",
+	Use:   "prke_key [key]",
 	Short: "Store API key for subsequent requests",
-	Long:  "Stores the API key in the system vault. The CLI will use this key for all authenticated requests (store key, store prompt, exec).",
-	Args:  cobra.ExactArgs(1),
+	Long:  "Stores the API key in the system vault. The CLI will use this key for all authenticated requests (store key, store prompt, exec). If key is omitted, an interactive form will prompt you.",
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runSetPkreKey,
 }
 
@@ -29,23 +30,35 @@ func init() {
 }
 
 func runSetPkreKey(cmd *cobra.Command, args []string) error {
-	key := strings.TrimSpace(args[0])
+	key := ""
+	if len(args) >= 1 {
+		key = strings.TrimSpace(args[0])
+	}
 	if key == "" {
-		fmt.Fprintf(os.Stderr, "error: API key cannot be empty\n")
+		if err := ui.FormSetAPIKey(&key); err != nil {
+			return err
+		}
+		key = strings.TrimSpace(key)
+	}
+	if key == "" {
+		PrintFriendlyError(os.Stderr,
+			"API key cannot be empty.",
+			"The key is required so the CLI can authenticate with the backend.",
+			[]string{bin() + " set prke_key pk_your_api_key_here"})
 		return fmt.Errorf("invalid api key")
 	}
 
-	cfg, err := config.New()
+	cfg, err := config.New(rootDebug && rootUseLocalConfig)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		PrintAPIError(os.Stderr, err.Error(), "Cannot load config (e.g. home directory).")
 		return err
 	}
 
 	if err := cfg.SetAPIKey(key); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		PrintAPIError(os.Stderr, err.Error(), "Check that the config file path is writable.")
 		return err
 	}
 
-	fmt.Fprintln(os.Stdout, "API key stored successfully.")
+	fmt.Fprintln(os.Stdout, ui.SuccessMessage("API key stored successfully."))
 	return nil
 }

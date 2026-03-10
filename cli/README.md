@@ -21,15 +21,21 @@ make build-all
 
 ## Config
 
-Config file: `~/.pv-config.yaml`
+By default, **`~/.prke-config.yaml` is not read**. The CLI uses:
+- **Base URL**: `PKRE_BASE_URL` env (if set), else default `https://api.promptkeeper.com`
+- **API key**: System keyring only (no config file fallback)
 
+To use the local config file (e.g. for local Docker testing), pass **both** flags:
+```bash
+prke --debug --use-local-config register ...
+prke --debug --use-local-config exec my_prompt
+```
+When both are set, `~/.prke-config.yaml` is read and written for **base_url only**. The API key is never stored in the config file (only in the system keyring).
+
+Config file format:
 ```yaml
 base_url: "https://api.promptkeeper.com"
-vault_access_token: "pk_..."   # API key (also stored in system keyring when possible)
 ```
-
-- **base_url**: API base URL (default: `https://api.promptkeeper.com`)
-- **vault_access_token**: Your API key. Stored in system keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service) when available; otherwise in this file.
 
 ## Commands
 

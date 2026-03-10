@@ -25,8 +25,11 @@ const (
 	MaxModelLen     = 128
 )
 
-// Allowed characters for identifiers (provider, prompt_title)
+// Allowed characters for identifiers (provider)
 var safeIdentRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// Allowed characters for prompt/function title (backend accepts names with spaces)
+var promptTitleRe = regexp.MustCompile(`^[a-zA-Z0-9_ -]+$`)
 
 // Variable keys may include dots for Handlebars (e.g. user.name)
 var varKeyRe = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
@@ -97,8 +100,8 @@ func ValidatePromptTitle(title string) error {
 	if utf8.RuneCountInString(title) > MaxPromptTitle {
 		return fmt.Errorf("prompt title exceeds maximum length")
 	}
-	if !safeIdentRe.MatchString(title) {
-		return fmt.Errorf("prompt title contains invalid characters (use alphanumeric, _, -)")
+	if !promptTitleRe.MatchString(title) {
+		return fmt.Errorf("prompt title contains invalid characters (use alphanumeric, spaces, _, -)")
 	}
 	return nil
 }

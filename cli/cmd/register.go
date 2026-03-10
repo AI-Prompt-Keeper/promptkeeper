@@ -4,19 +4,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/promptkeeper/cli/internal/api"
 	"github.com/promptkeeper/cli/internal/config"
+	"github.com/promptkeeper/cli/internal/ui"
 	"github.com/promptkeeper/cli/internal/validate"
 	"github.com/spf13/cobra"
 )
 
 var registerCmd = &cobra.Command{
-	Use:   "register <email> <password>",
+	Use:   "register [email] [password]",
 	Short: "Register a new user",
-	Long:  "Registers a new user with the Secure AI Gateway. On success, stores the API key in the system vault. You must store the API key somewhere secure—it is returned only once.",
-	Args:  cobra.ExactArgs(2),
-	RunE:  runRegister,
+	Long:  "Registers a new user with the Secure AI Gateway. On success, stores the API key in the system vault. You must store the API key somewhere secure—it is returned only once. If email or password are omitted, an interactive form will guide you.",
+	Args: cobra.MaximumNArgs(2),
+	RunE: runRegister,
 }
 
 func init() {
@@ -24,35 +26,61 @@ func init() {
 }
 
 func runRegister(cmd *cobra.Command, args []string) error {
-	email := args[0]
-	password := args[1]
+	email := ""
+	password := ""
+	if len(args) >= 1 {
+		email = strings.TrimSpace(args[0])
+	}
+	if len(args) >= 2 {
+		password = strings.TrimSpace(args[1])
+	}
+	if len(args) < 2 {
+		if err := ui.FormRegister(&email, &password); err != nil {
+			return err
+		}
+		email = strings.TrimSpace(email)
+		password = strings.TrimSpace(password)
+	}
 
 	if err := validate.ValidateEmail(email); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		PrintFriendlyError(os.Stderr,
+			"Invalid email.",
+			err.Error(),
+			[]string{bin() + " register you@example.com YourSecurePassword123"})
 		return err
 	}
 	if err := validate.ValidatePassword(password); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		PrintFriendlyError(os.Stderr,
+			"Invalid password.",
+			err.Error(),
+			[]string{bin() + " register you@example.com YourSecurePassword123", "# Use at least 12 characters."})
 		return err
 	}
 
-	cfg, err := config.New()
+	cfg, err := config.New(rootDebug && rootUseLocalConfig)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		PrintAPIError(os.Stderr, err.Error(), "Cannot load config (e.g. home directory).")
 		return err
 	}
 
-	client := api.NewClient(cfg.BaseURL(), "")
+	baseURL := cfg.BaseURL()
+	if rootDebug {
+		fmt.Fprintln(os.Stderr, ui.DebugLine("base URL: %s", baseURL))
+	}
+	client := api.NewClient(baseURL, "")
+	if rootDebug {
+		client.DebugLog = os.Stderr
+	}
 	resp, err := client.Register(email, password, "")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		PrintAPIError(os.Stderr, err.Error(), "Check that the backend is reachable and the email is not already registered.")
 		return err
 	}
 
 	apiKey, _ := resp["api_key"].(string)
 	if apiKey != "" {
 		if err := cfg.SetAPIKey(apiKey); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not store API key in vault: %v\n", err)
+			fmt.Fprintln(os.Stderr, ui.WarningBlock("Warning", "Could not store API key in vault: "+err.Error()))
 		}
 	}
 
@@ -60,17 +88,15 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(resp); err != nil {
-		fmt.Fprintf(os.Stderr, "error encoding response: %v\n", err)
+		PrintAPIError(os.Stderr, "Failed to print response: "+err.Error(), "")
 		return err
 	}
 
 	if apiKey != "" {
 		fmt.Fprintln(os.Stdout)
-		fmt.Fprintln(os.Stdout, "┌─────────────────────────────────────────────────────────────────┐")
-		fmt.Fprintln(os.Stdout, "│  ⚠️  IMPORTANT: Store your API key securely!                      │")
-		fmt.Fprintln(os.Stdout, "│     It is returned only once. The CLI has saved it for you.       │")
-		fmt.Fprintln(os.Stdout, "│     Future requests will use this key automatically.             │")
-		fmt.Fprintln(os.Stdout, "└─────────────────────────────────────────────────────────────────┘")
+		fmt.Fprintln(os.Stdout, ui.WarningBlock("⚠️  IMPORTANT: Store your API key securely",
+			"It is returned only once. The CLI has saved it for you.",
+			"Future requests will use this key automatically."))
 	}
 
 	return nil
