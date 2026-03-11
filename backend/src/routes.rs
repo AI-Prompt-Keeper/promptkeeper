@@ -3,18 +3,20 @@
 use axum::{
     body::Bytes,
     extract::{FromRef, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::sse::{Event, Sse},
     routing::{get, post},
     Json, Router,
 };
+use std::collections::HashMap;
 use std::pin::Pin;
+use std::sync::RwLock;
+use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use futures_util::Stream;
 use rand::RngCore;
 use sqlx::Row;
 use std::sync::Arc;
-use std::time::Instant;
 use tracing::Instrument;
 
 use crate::auth::api_token::Auth;
@@ -45,6 +47,117 @@ pub mod request {
 
 }
 
+/// In-memory rate limiter: one register per IP per window (e.g. 10 minutes).
+#[derive(Default)]
+pub struct RegisterRateLimiter {
+    last_by_ip: RwLock<HashMap<String, Instant>>,
+}
+
+const REGISTER_RATE_WINDOW: Duration = Duration::from_secs(10 * 60); // 10 minutes
+
+impl RegisterRateLimiter {
+    /// Returns true if the request is allowed, false if rate limited. Records the attempt when allowed.
+    pub fn check_and_record(&self, ip: &str) -> bool {
+        let now = Instant::now();
+        let mut map = self.last_by_ip.write().expect("register rate limiter lock");
+        // Prune expired entries to avoid unbounded growth
+        map.retain(|_, t| now.saturating_duration_since(*t) <= REGISTER_RATE_WINDOW);
+        if let Some(&last) = map.get(ip) {
+            if now.saturating_duration_since(last) < REGISTER_RATE_WINDOW {
+                return false;
+            }
+        }
+        map.insert(ip.to_string(), now);
+        true
+    }
+}
+
+// --- Proof-of-Work for register ---
+
+/// Number of leading zero bits required in SHA256(nonce || valid_until || solution).
+const REGISTER_POW_DIFFICULTY: u32 = 4;
+/// Challenge validity window (client must submit solution before this expires).
+const REGISTER_POW_VALIDITY: chrono::Duration = chrono::Duration::minutes(5);
+
+/// Response for GET /v1/auth/register-challenge.
+#[derive(Debug, serde::Serialize)]
+struct RegisterChallengeResponse {
+    /// Hex-encoded random nonce (16 bytes). Client must use this exact value when computing solution.
+    pub nonce: String,
+    /// Required leading zero bits in the PoW hash.
+    pub difficulty: u32,
+    /// ISO8601 timestamp. Solution is accepted only if the server time is before this.
+    pub valid_until: String,
+}
+
+/// Count leading zero bits in a 32-byte hash (big-endian).
+fn leading_zero_bits(hash: &[u8; 32]) -> u32 {
+    let mut bits = 0u32;
+    for &b in hash {
+        if b == 0 {
+            bits += 8;
+        } else {
+            bits += b.leading_zeros();
+            break;
+        }
+    }
+    bits
+}
+
+/// Verify PoW: SHA256(nonce_hex_decoded || valid_until_utf8 || solution_utf8) has >= difficulty leading zero bits.
+/// Returns an error message if invalid.
+fn verify_register_pow(
+    nonce_hex: &str,
+    valid_until: &str,
+    solution: &str,
+    difficulty: u32,
+) -> Result<(), String> {
+    let nonce_bytes = hex::decode(nonce_hex.trim()).map_err(|e| format!("invalid nonce hex: {}", e))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&nonce_bytes);
+    hasher.update(valid_until.as_bytes());
+    hasher.update(solution.as_bytes());
+    let hash: [u8; 32] = hasher.finalize().into();
+    let bits = leading_zero_bits(&hash);
+    if bits < difficulty {
+        return Err(format!("insufficient proof-of-work: got {} leading zero bits, need {}", bits, difficulty));
+    }
+    Ok(())
+}
+
+/// GET /v1/auth/register-challenge — returns nonce, difficulty, valid_until for client to compute PoW.
+async fn register_challenge_handler() -> Json<RegisterChallengeResponse> {
+    let mut nonce = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut nonce);
+    let valid_until = Utc::now() + REGISTER_POW_VALIDITY;
+    Json(RegisterChallengeResponse {
+        nonce: hex::encode(nonce),
+        difficulty: REGISTER_POW_DIFFICULTY,
+        valid_until: valid_until.to_rfc3339(),
+    })
+}
+
+/// Client IP from X-Forwarded-For (first client) or X-Real-IP. None if neither is present (request is not rate limited).
+fn client_ip_from_headers(headers: &HeaderMap) -> Option<String> {
+    if let Some(v) = headers.get("x-forwarded-for") {
+        if let Ok(s) = v.to_str() {
+            let first = s.split(',').next().map(str::trim).unwrap_or("").to_string();
+            if !first.is_empty() {
+                return Some(first);
+            }
+        }
+    }
+    if let Some(v) = headers.get("x-real-ip") {
+        if let Ok(s) = v.to_str() {
+            let s = s.trim();
+            if !s.is_empty() {
+                return Some(s.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Application state: execute pipeline + optional envelope encryption and Put service.
 #[derive(Clone)]
 pub struct AppState {
@@ -55,6 +168,8 @@ pub struct AppState {
     pub put_service: Option<Arc<PutFunctionService>>,
     /// Shared Postgres connection pool.
     pub db: sqlx::PgPool,
+    /// Rate limiter for register: 1 IP per 10 minutes.
+    pub register_rate_limiter: Arc<RegisterRateLimiter>,
 }
 
 impl FromRef<AppState> for sqlx::PgPool {
@@ -70,6 +185,7 @@ impl Default for AppState {
             secrets: None,
             put_service: None,
             db: sqlx::PgPool::connect_lazy("postgres://localhost/promptkeeper").expect("lazy pg pool"),
+            register_rate_limiter: Arc::new(RegisterRateLimiter::default()),
         }
     }
 }
@@ -100,9 +216,11 @@ pub async fn app_router(secrets: Option<Arc<SecretEnveloper>>, db: sqlx::PgPool)
         enveloper: secrets.clone(),
     };
 
+    let register_rate_limiter = Arc::new(RegisterRateLimiter::default());
     Ok(Router::new()
         .route("/health", get(health_handler))
         .route("/v1/execute", post(execute_handler))
+        .route("/v1/auth/register-challenge", get(register_challenge_handler))
         .route("/v1/auth/register", post(register_handler))
         .route("/v1/auth/login", post(login_handler))
         .route("/v1/keys", post(put_key_handler))
@@ -112,6 +230,7 @@ pub async fn app_router(secrets: Option<Arc<SecretEnveloper>>, db: sqlx::PgPool)
             secrets,
             put_service,
             db,
+            register_rate_limiter,
         }))
 }
 
@@ -138,10 +257,75 @@ struct RegisterResponse {
 }
 
 /// POST /v1/auth/register: create user, default workspace, workspace_members, and API key.
+/// Rate limited: 1 request per IP per 10 minutes.
 async fn register_handler(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<RegisterRequest>,
 ) -> Result<(StatusCode, Json<RegisterResponse>), (StatusCode, Json<serde_json::Value>)> {
+    if let Some(client_ip) = client_ip_from_headers(&headers) {
+        if !state.register_rate_limiter.check_and_record(&client_ip) {
+            return Err((
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(serde_json::json!({
+                    "error": "registration rate limited: one attempt per IP per 10 minutes"
+                })),
+            ));
+        }
+    }
+
+    // Proof-of-work verification (required for register).
+    let pow_nonce = headers
+        .get("x-pow-nonce")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim);
+    let pow_solution = headers
+        .get("x-pow-solution")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim);
+    let pow_valid_until = headers
+        .get("x-pow-valid-until")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim);
+    let (pow_nonce, pow_solution, pow_valid_until) = match (pow_nonce, pow_solution, pow_valid_until) {
+        (Some(n), Some(s), Some(v)) if !n.is_empty() && !s.is_empty() && !v.is_empty() => (n, s, v),
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "proof-of-work required: request must include headers X-Pow-Nonce, X-Pow-Solution, X-Pow-Valid-Until (get challenge from GET /v1/auth/register-challenge)"
+                })),
+            ));
+        }
+    };
+    let valid_until_dt = match chrono::DateTime::parse_from_rfc3339(pow_valid_until) {
+        Ok(dt) => dt.with_timezone(&Utc),
+        Err(_) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "invalid X-Pow-Valid-Until: must be ISO8601 (e.g. 2025-02-06T12:00:00Z)"
+                })),
+            ));
+        }
+    };
+    if Utc::now() > valid_until_dt {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "proof-of-work challenge expired; request a new challenge from GET /v1/auth/register-challenge"
+            })),
+        ));
+    }
+    if let Err(e) = verify_register_pow(pow_nonce, pow_valid_until, pow_solution, REGISTER_POW_DIFFICULTY) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("invalid proof-of-work: {}", e)
+            })),
+        ));
+    }
+
     // Basic validation – keep raw password in memory as short as possible.
     let email = body.email.trim().to_lowercase();
     if !email.contains('@') {

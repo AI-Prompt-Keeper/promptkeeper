@@ -8,8 +8,49 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use promptkeeper::routes::app_router;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
+
+/// Solve proof-of-work for register: find solution such that SHA256(nonce||valid_until||solution) has >= difficulty leading zero bits.
+fn solve_register_pow(nonce_hex: &str, valid_until: &str, difficulty: u32) -> String {
+    let nonce_bytes = hex::decode(nonce_hex).expect("nonce must be hex");
+    for trial in 0u64.. {
+        let solution = trial.to_string();
+        let mut hasher = Sha256::new();
+        hasher.update(&nonce_bytes);
+        hasher.update(valid_until.as_bytes());
+        hasher.update(solution.as_bytes());
+        let hash: [u8; 32] = hasher.finalize().into();
+        let mut bits = 0u32;
+        for &b in &hash {
+            if b == 0 {
+                bits += 8;
+            } else {
+                bits += b.leading_zeros();
+                break;
+            }
+        }
+        if bits >= difficulty {
+            return solution;
+        }
+    }
+    unreachable!()
+}
+
+/// GET /v1/auth/register-challenge, solve PoW, return (nonce, solution, valid_until) for headers.
+async fn get_register_pow_headers(app: &axum::Router) -> (String, String, String) {
+    let req = Request::get("/v1/auth/register-challenge").body(Body::empty()).unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = body_string(res.into_body()).await;
+    let ch: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let nonce = ch.get("nonce").and_then(|v| v.as_str()).expect("nonce").to_string();
+    let valid_until = ch.get("valid_until").and_then(|v| v.as_str()).expect("valid_until").to_string();
+    let difficulty = ch.get("difficulty").and_then(|v| v.as_u64()).unwrap_or(4) as u32;
+    let solution = solve_register_pow(&nonce, &valid_until, difficulty);
+    (nonce, solution, valid_until)
+}
 
 /// Database URL for tests. Uses DATABASE_URL env or falls back to local default.
 fn test_db_url() -> String {
@@ -94,11 +135,15 @@ async fn test_app_with_api_key_inner(setup_disabled_fn: bool) -> (axum::Router, 
         "password": "securePassword123",
         "name": "Execute Test"
     });
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
     let reg = app
         .clone()
         .oneshot(
             Request::post("/v1/auth/register")
                 .header("Content-Type", "application/json")
+                .header("X-Pow-Nonce", pow_n)
+                .header("X-Pow-Solution", pow_s)
+                .header("X-Pow-Valid-Until", pow_v)
                 .body(Body::from(serde_json::to_vec(&reg_body).unwrap()))
                 .unwrap(),
         )
@@ -714,10 +759,14 @@ async fn register_happy_path_returns_201_and_user() {
         "name": "Test User"
     });
 
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
     let response = app
         .oneshot(
             Request::post("/v1/auth/register")
                 .header("Content-Type", "application/json")
+                .header("X-Pow-Nonce", pow_n)
+                .header("X-Pow-Solution", pow_s)
+                .header("X-Pow-Valid-Until", pow_v)
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap(),
         )
@@ -756,10 +805,14 @@ async fn register_deny_unknown_fields_returns_422() {
         "extra": "field"
     });
 
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
     let response = app
         .oneshot(
             Request::post("/v1/auth/register")
                 .header("Content-Type", "application/json")
+                .header("X-Pow-Nonce", pow_n)
+                .header("X-Pow-Solution", pow_s)
+                .header("X-Pow-Valid-Until", pow_v)
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap(),
         )
@@ -774,10 +827,14 @@ async fn register_missing_fields_returns_422() {
     let app = test_app_no_kms().await;
     let body = json!({});
 
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
     let response = app
         .oneshot(
             Request::post("/v1/auth/register")
                 .header("Content-Type", "application/json")
+                .header("X-Pow-Nonce", pow_n)
+                .header("X-Pow-Solution", pow_s)
+                .header("X-Pow-Valid-Until", pow_v)
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap(),
         )
@@ -796,10 +853,14 @@ async fn register_empty_email_returns_400() {
         "name": "Alice"
     });
 
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
     let response = app
         .oneshot(
             Request::post("/v1/auth/register")
                 .header("Content-Type", "application/json")
+                .header("X-Pow-Nonce", pow_n)
+                .header("X-Pow-Solution", pow_s)
+                .header("X-Pow-Valid-Until", pow_v)
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap(),
         )
@@ -819,10 +880,14 @@ async fn register_invalid_email_returns_400() {
         "name": "Alice"
     });
 
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
     let response = app
         .oneshot(
             Request::post("/v1/auth/register")
                 .header("Content-Type", "application/json")
+                .header("X-Pow-Nonce", pow_n)
+                .header("X-Pow-Solution", pow_s)
+                .header("X-Pow-Valid-Until", pow_v)
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap(),
         )
@@ -844,10 +909,14 @@ async fn register_password_too_short_returns_400() {
         "name": "Alice"
     });
 
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
     let response = app
         .oneshot(
             Request::post("/v1/auth/register")
                 .header("Content-Type", "application/json")
+                .header("X-Pow-Nonce", pow_n)
+                .header("X-Pow-Solution", pow_s)
+                .header("X-Pow-Valid-Until", pow_v)
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap(),
         )
@@ -869,10 +938,14 @@ async fn register_password_11_chars_fails() {
         "name": "Alice"
     });
 
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
     let response = app
         .oneshot(
             Request::post("/v1/auth/register")
                 .header("Content-Type", "application/json")
+                .header("X-Pow-Nonce", pow_n)
+                .header("X-Pow-Solution", pow_s)
+                .header("X-Pow-Valid-Until", pow_v)
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap(),
         )
@@ -903,10 +976,14 @@ async fn register_email_normalized_to_lowercase() {
         "name": "Alice"
     });
 
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
     let response = app
         .oneshot(
             Request::post("/v1/auth/register")
                 .header("Content-Type", "application/json")
+                .header("X-Pow-Nonce", pow_n)
+                .header("X-Pow-Solution", pow_s)
+                .header("X-Pow-Valid-Until", pow_v)
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap(),
         )
@@ -935,10 +1012,14 @@ async fn register_missing_name_still_succeeds() {
         "password": "securePassword123"
     });
 
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
     let response = app
         .oneshot(
             Request::post("/v1/auth/register")
                 .header("Content-Type", "application/json")
+                .header("X-Pow-Nonce", pow_n)
+                .header("X-Pow-Solution", pow_s)
+                .header("X-Pow-Valid-Until", pow_v)
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap(),
         )
@@ -967,11 +1048,16 @@ async fn register_duplicate_email_returns_409() {
         "name": "First"
     });
 
+    let (pow_n1, pow_s1, pow_v1) = get_register_pow_headers(&app).await;
     let resp1 = app
         .clone()
         .oneshot(
             Request::post("/v1/auth/register")
                 .header("Content-Type", "application/json")
+                .header("X-Forwarded-For", "127.0.0.1")
+                .header("X-Pow-Nonce", pow_n1)
+                .header("X-Pow-Solution", pow_s1)
+                .header("X-Pow-Valid-Until", pow_v1)
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap(),
         )
@@ -980,10 +1066,15 @@ async fn register_duplicate_email_returns_409() {
 
     assert_eq!(resp1.status(), StatusCode::CREATED, "First registration must succeed to test duplicate; DB may be unavailable");
 
+    let (pow_n2, pow_s2, pow_v2) = get_register_pow_headers(&app).await;
     let resp2 = app
         .oneshot(
             Request::post("/v1/auth/register")
                 .header("Content-Type", "application/json")
+                .header("X-Forwarded-For", "127.0.0.2")
+                .header("X-Pow-Nonce", pow_n2)
+                .header("X-Pow-Solution", pow_s2)
+                .header("X-Pow-Valid-Until", pow_v2)
                 .body(Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap(),
         )
@@ -1082,11 +1173,15 @@ async fn login_happy_path_returns_200_and_token() {
         "name": "Login Test"
     });
 
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
     let reg = app
         .clone()
         .oneshot(
             Request::post("/v1/auth/register")
                 .header("Content-Type", "application/json")
+                .header("X-Pow-Nonce", pow_n)
+                .header("X-Pow-Solution", pow_s)
+                .header("X-Pow-Valid-Until", pow_v)
                 .body(Body::from(serde_json::to_vec(&reg_body).unwrap()))
                 .unwrap(),
         )
@@ -1145,11 +1240,15 @@ async fn login_wrong_password_returns_401() {
         "name": "User"
     });
 
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
     let reg = app
         .clone()
         .oneshot(
             Request::post("/v1/auth/register")
                 .header("Content-Type", "application/json")
+                .header("X-Pow-Nonce", pow_n)
+                .header("X-Pow-Solution", pow_s)
+                .header("X-Pow-Valid-Until", pow_v)
                 .body(Body::from(serde_json::to_vec(&reg_body).unwrap()))
                 .unwrap(),
         )

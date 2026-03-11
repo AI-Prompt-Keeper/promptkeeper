@@ -209,11 +209,13 @@ Stores a prompt template for a named function. Uses envelope encryption. Raw sec
 
 Creates a new user with email and password. Also creates a default workspace, adds the user as owner, and issues an API key for that workspace. Email is normalized to lowercase; password must be at least 12 characters. Requires `DATABASE_URL`.
 
+**Proof-of-work:** Registration requires a valid PoW. First call `GET /v1/auth/register-challenge` to get `nonce`, `difficulty`, and `valid_until`. Find a `solution` such that `SHA256(nonce_bytes || valid_until || solution)` has ≥ `difficulty` leading zero bits. Then send `POST /v1/auth/register` with the same JSON body plus headers: `X-Pow-Nonce`, `X-Pow-Solution`, `X-Pow-Valid-Until`. See `cli/docs/REGISTER_POW.md` for client implementation details.
+
 | Property | Value |
 |----------|--------|
 | **Method** | `POST` |
 | **Path** | `/v1/auth/register` |
-| **Request** | JSON body |
+| **Request** | JSON body + headers (see above) |
 | **Response** | JSON, 201 Created |
 
 **Request body (JSON):**
@@ -248,7 +250,7 @@ Creates a new user with email and password. Also creates a default workspace, ad
 
 | Status | When |
 |--------|------|
-| 400 Bad Request | Invalid email or password too short. |
+| 400 Bad Request | Missing or invalid proof-of-work; invalid email or password too short; challenge expired. |
 | 409 Conflict | Email already registered. |
 | 500 Internal Server Error | Hashing, DB, or transaction failure. |
 
