@@ -43,8 +43,52 @@ func (c *Client) authHeaders() map[string]string {
 	return h
 }
 
-// Register creates a new user. POST /v1/auth/register
+// GetRegisterChallenge fetches the proof-of-work challenge. GET /v1/auth/register-challenge.
+func (c *Client) GetRegisterChallenge() (*RegisterChallenge, error) {
+	url := c.BaseURL + "/v1/auth/register-challenge"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.DebugLog != nil {
+		fmt.Fprintf(c.DebugLog, "[debug] GET %s\n", url)
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if c.DebugLog != nil {
+		fmt.Fprintf(c.DebugLog, "[debug] response status: %s\n", resp.Status)
+		fmt.Fprintf(c.DebugLog, "[debug] response body: %s\n", string(data))
+	}
+	if resp.StatusCode != http.StatusOK {
+		var result map[string]interface{}
+		_ = json.Unmarshal(data, &result)
+		return nil, fmt.Errorf("challenge failed (%d): %s", resp.StatusCode, getErrorMsg(result))
+	}
+	var ch RegisterChallenge
+	if err := json.Unmarshal(data, &ch); err != nil {
+		return nil, fmt.Errorf("invalid challenge response: %w", err)
+	}
+	return &ch, nil
+}
+
+// Register creates a new user. Obtains a PoW challenge, solves it, then POST /v1/auth/register with PoW headers.
 func (c *Client) Register(email, password, name string) (map[string]interface{}, error) {
+	ch, err := c.GetRegisterChallenge()
+	if err != nil {
+		return nil, err
+	}
+	solution, err := SolvePoW(ch.Nonce, ch.ValidUntil, ch.Difficulty)
+	if err != nil {
+		return nil, fmt.Errorf("proof-of-work: %w", err)
+	}
+
 	body := map[string]interface{}{
 		"email":    email,
 		"password": password,
@@ -61,9 +105,12 @@ func (c *Client) Register(email, password, name string) (map[string]interface{},
 	for k, v := range c.authHeaders() {
 		req.Header.Set(k, v)
 	}
+	req.Header.Set("X-Pow-Nonce", ch.Nonce)
+	req.Header.Set("X-Pow-Solution", solution)
+	req.Header.Set("X-Pow-Valid-Until", ch.ValidUntil)
+
 	if c.DebugLog != nil {
 		fmt.Fprintf(c.DebugLog, "[debug] POST %s\n", url)
-		// Redact password in request log
 		logBody := map[string]interface{}{"email": email, "password": "[REDACTED]"}
 		if name != "" {
 			logBody["name"] = name
@@ -90,6 +137,9 @@ func (c *Client) Register(email, password, name string) (map[string]interface{},
 	}
 	if resp.StatusCode != http.StatusCreated {
 		msg := getErrorMsg(result)
+		if resp.StatusCode == http.StatusBadRequest && strings.Contains(strings.ToLower(msg), "proof-of-work") {
+			return nil, fmt.Errorf("registration failed: proof-of-work invalid or expired. Please try again")
+		}
 		return nil, fmt.Errorf("register failed (%d): %s", resp.StatusCode, msg)
 	}
 	return result, nil

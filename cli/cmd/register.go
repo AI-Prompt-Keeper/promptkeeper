@@ -71,9 +71,14 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	if rootDebug {
 		client.DebugLog = os.Stderr
 	}
+	fmt.Fprintln(os.Stderr, ui.Body.Render("Solving proof-of-work..."))
 	resp, err := client.Register(email, password, "")
 	if err != nil {
-		PrintAPIError(os.Stderr, err.Error(), "Check that the backend is reachable and the email is not already registered.")
+		hint := "Check that the backend is reachable and the email is not already registered."
+		if strings.Contains(err.Error(), "proof-of-work") {
+			hint = "Get a fresh challenge by running the command again."
+		}
+		PrintAPIError(os.Stderr, err.Error(), hint)
 		return err
 	}
 
