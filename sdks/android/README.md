@@ -25,7 +25,7 @@ repositories {
     mavenLocal()
 }
 dependencies {
-    implementation("com.promptkeeper:android-sdk:1.0.0")
+    implementation("ai.promptkeeper:android-sdk:1.0.0")
 }
 ```
 
@@ -39,11 +39,15 @@ Configure `publishing.repositories` in `build.gradle.kts` (e.g. Maven Central or
 
 ## Usage
 
+Package: `ai.promptkeeper.sdk`. Add `import ai.promptkeeper.sdk.PromptKeeper` (and `PutKeyResponse`, `PutPromptResponse`, `PromptKeeperException` as needed).
+
 ### 1. Init (in-memory API key)
 
 The API key is stored **in-memory only** for the current app process. It is not persisted.
 
 ```kotlin
+import ai.promptkeeper.sdk.PromptKeeper
+
 // Option A: Initialize and keep the instance
 val sdk = PromptKeeper.initialize(apiKey = "pk_your_key_here")
 

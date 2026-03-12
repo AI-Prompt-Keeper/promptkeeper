@@ -1,4 +1,4 @@
-package com.promptkeeper.sdk
+package ai.promptkeeper.sdk
 
 /**
  * Base exception for SDK errors.

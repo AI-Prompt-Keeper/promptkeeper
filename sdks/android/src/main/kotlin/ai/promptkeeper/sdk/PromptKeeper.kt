@@ -1,11 +1,11 @@
-package com.promptkeeper.sdk
+package ai.promptkeeper.sdk
 
-import com.promptkeeper.sdk.model.ExecuteRequest
-import com.promptkeeper.sdk.model.PutKeyRequest
-import com.promptkeeper.sdk.model.PutKeyResponse
-import com.promptkeeper.sdk.model.PutPromptRequest
-import com.promptkeeper.sdk.model.PutPromptResponse
-import com.promptkeeper.sdk.sse.SSEParser
+import ai.promptkeeper.sdk.model.ExecuteRequest
+import ai.promptkeeper.sdk.model.PutKeyRequest
+import ai.promptkeeper.sdk.model.PutKeyResponse
+import ai.promptkeeper.sdk.model.PutPromptRequest
+import ai.promptkeeper.sdk.model.PutPromptResponse
+import ai.promptkeeper.sdk.sse.SSEParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow

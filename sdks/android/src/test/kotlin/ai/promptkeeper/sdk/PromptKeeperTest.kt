@@ -1,4 +1,4 @@
-package com.promptkeeper.sdk
+package ai.promptkeeper.sdk
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

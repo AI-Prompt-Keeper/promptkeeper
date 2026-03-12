@@ -1,4 +1,4 @@
-package com.promptkeeper.sdk.model
+package ai.promptkeeper.sdk.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable

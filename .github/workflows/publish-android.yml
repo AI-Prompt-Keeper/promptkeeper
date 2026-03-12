@@ -1,0 +1,84 @@
+name: Publish Android SDK
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'sdks/android/**'
+
+permissions:
+  contents: write
+
+jobs:
+  publish-android:
+    runs-on: ubuntu-latest
+
+    env:
+      OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+      OSSRH_TOKEN: ${{ secrets.OSSRH_TOKEN }}
+      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+      GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Bump VERSION_NAME based on commit message
+        working-directory: sdks/android
+        run: |
+          set -e
+
+          current_version=$(grep '^VERSION_NAME=' gradle.properties | cut -d'=' -f2)
+          if [ -z "$current_version" ]; then
+            echo "VERSION_NAME not found in gradle.properties"; exit 1
+          fi
+
+          IFS='.' read -r major minor patch <<< "$current_version"
+
+          commit_msg="${{ github.event.head_commit.message }}"
+
+          if echo "$commit_msg" | grep -qi '\[major\]'; then
+            major=$((major + 1))
+            minor=0
+            patch=0
+          elif echo "$commit_msg" | grep -qi '\[minor\]'; then
+            minor=$((minor + 1))
+            patch=0
+          else
+            patch=$((patch + 1))
+          fi
+
+          new_version="${major}.${minor}.${patch}"
+
+          echo "Bumping VERSION_NAME: $current_version -> $new_version"
+
+          sed -i "s/^VERSION_NAME=.*/VERSION_NAME=${new_version}/" gradle.properties
+
+          echo "NEW_VERSION=${new_version}" >> "$GITHUB_ENV"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -am "chore(android): bump version to ${new_version} [skip ci]"
+            git push origin HEAD:main
+          fi
+
+      - name: Run tests
+        working-directory: sdks/android
+        run: ./gradlew test --stacktrace
+
+      - name: Publish to Maven Central (Sonatype S01)
+        working-directory: sdks/android
+        run: ./gradlew publishToSonatype closeAndReleaseStagingRepository --stacktrace

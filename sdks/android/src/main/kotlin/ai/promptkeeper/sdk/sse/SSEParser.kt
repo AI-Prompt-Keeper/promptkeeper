@@ -1,4 +1,4 @@
-package com.promptkeeper.sdk.sse
+package ai.promptkeeper.sdk.sse
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject

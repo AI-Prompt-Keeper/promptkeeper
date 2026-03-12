@@ -1,4 +1,4 @@
-package com.promptkeeper.sdk
+package ai.promptkeeper.sdk
 
 /**
  * Holds the API key in memory only. Not persisted (no SharedPreferences, DataStore, or file).
