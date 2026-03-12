@@ -1,0 +1,75 @@
+version: 2
+
+project_name: prke
+
+builds:
+  - id: prke
+    dir: ./cli
+    main: ./main.go
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    builds:
+      - prke
+    name_template: "prke{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - LICENSE*
+      - README*
+
+release:
+  github:
+    owner: AI-Prompt-Keeper
+    name: promptkeeper
+  draft: false
+  prerelease: false
+
+brews:
+  - name: prke
+    repository:
+      owner: AI-Prompt-Keeper
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: PromptKeeper Bot
+      email: noreply@promptkeeper.com
+    directory: Formula
+    homepage: "https://promptkeeper.com"
+    description: "PromptKeeper CLI (prke)."
+    license: "Apache-2.0"
+
+snapcrafts:
+  - id: prke
+    name: prke
+    summary: "PromptKeeper CLI"
+    description: "PromptKeeper CLI for working with the Secure AI Gateway."
+    grade: stable
+    confinement: strict
+    publish: true
+    apps:
+      prke:
+        command: prke
+
+winget:
+  - id: PromptKeeper.prke
+    name: prke
+    publisher: PromptKeeper
+    short_description: "PromptKeeper CLI"
+    license: Apache-2.0
+    repository:
+      owner: microsoft
+      name: winget-pkgs
+      token: "{{ .Env.GITHUB_TOKEN }}"
+
