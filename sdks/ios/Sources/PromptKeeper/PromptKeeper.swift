@@ -11,6 +11,9 @@ import Foundation
 /// API key is kept in-memory only for the current app run; it is not persisted.
 public final class PromptKeeper {
 
+    /// Default production API base URL. Isolated here to avoid force-unwrap in public API.
+    private static let defaultBaseURL: URL = URL(string: "https://api.promptkeeper.ai")!
+
     private let baseURL: URL
     private let apiKeyHolder: APIKeyHolder
     private let session: URLSession
@@ -18,7 +21,7 @@ public final class PromptKeeper {
     /// Creates and configures the SDK with an API key.
     /// - Parameter apiKey: API key obtained from your backend (e.g. after registration). Stored in-memory only for this app run.
     public init(apiKey: String) {
-        self.baseURL = URL(string: "https://api.promptkeeper.ai")!
+        self.baseURL = Self.defaultBaseURL
         self.apiKeyHolder = APIKeyHolder(apiKey: apiKey)
         self.session = URLSession.shared
     }
@@ -136,7 +139,7 @@ public final class PromptKeeper {
                     continuation.finish(throwing: error)
                 }
             }
-            continuation.onTermination = { @Sendable _ in task.cancel() }
+            continuation.onTermination = { [weak task] _ in task?.cancel() }
         }
     }
 

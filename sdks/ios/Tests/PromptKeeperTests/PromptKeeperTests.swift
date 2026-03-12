@@ -29,8 +29,8 @@ final class PromptKeeperTests: XCTestCase {
         let data = Data(json.utf8)
         let decoder = JSONDecoder()
         let response = try decoder.decode(PutKeyResponse.self, from: data)
-        XCTAssertEqual(response.version_id, "v1")
-        XCTAssertEqual(response.created_at, "2025-01-01T00:00:00Z")
+        XCTAssertEqual(response.versionId, "v1")
+        XCTAssertEqual(response.createdAt, "2025-01-01T00:00:00Z")
     }
 
     func testExecStreamEventChunk() {

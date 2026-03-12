@@ -16,10 +16,21 @@ struct PutKeyRequest: Encodable {
 
 /// Response from setKey (store provider API key).
 public struct PutKeyResponse: Decodable, Sendable {
-    public let version_id: String
-    public let created_at: String
-    public let kms_key_arn: String?
+    /// Opaque version identifier for the stored key.
+    public let versionId: String
+    /// ISO 8601 timestamp when the key was created.
+    public let createdAt: String
+    /// KMS key ARN if server-side encryption is used.
+    public let kmsKeyArn: String?
+    /// Key fingerprint for verification, if provided by the server.
     public let fingerprint: String?
+
+    enum CodingKeys: String, CodingKey {
+        case versionId = "version_id"
+        case createdAt = "created_at"
+        case kmsKeyArn = "kms_key_arn"
+        case fingerprint
+    }
 }
 
 // MARK: - Set prompt
@@ -33,10 +44,21 @@ struct PutPromptRequest: Encodable {
 
 /// Response from setPrompt (store prompt template).
 public struct PutPromptResponse: Decodable, Sendable {
-    public let version_id: String
-    public let created_at: String
-    public let kms_key_arn: String?
+    /// Opaque version identifier for the stored prompt.
+    public let versionId: String
+    /// ISO 8601 timestamp when the prompt was created.
+    public let createdAt: String
+    /// KMS key ARN if server-side encryption is used.
+    public let kmsKeyArn: String?
+    /// Content fingerprint for verification, if provided by the server.
     public let fingerprint: String?
+
+    enum CodingKeys: String, CodingKey {
+        case versionId = "version_id"
+        case createdAt = "created_at"
+        case kmsKeyArn = "kms_key_arn"
+        case fingerprint
+    }
 }
 
 // MARK: - Execute
@@ -56,10 +78,14 @@ public enum ExecStreamEvent: Sendable {
 
 // MARK: - Errors
 
+/// Errors thrown by the Prompt Keeper SDK.
 public enum PromptKeeperError: Error, Sendable {
+    /// HTTP request failed with the given status code and response body.
     case httpStatus(Int, body: Data)
+    /// Server returned an error payload (e.g. from the execute stream).
     case serverError(String)
 
+    /// Human-readable error message suitable for logging or display.
     public var message: String {
         switch self {
         case .httpStatus(let code, let body):
