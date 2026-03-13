@@ -102,7 +102,7 @@ public final class PromptKeeper {
         model: String? = nil
     ) -> AsyncThrowingStream<ExecStreamEvent, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task {
+            var task: Task<Void, Never>? = Task {
                 do {
                     let endpoint = baseURL.appendingPathComponent("v1/execute")
                     var request = URLRequest(url: endpoint)
@@ -139,7 +139,10 @@ public final class PromptKeeper {
                     continuation.finish(throwing: error)
                 }
             }
-            continuation.onTermination = { [weak task] _ in task?.cancel() }
+            continuation.onTermination = { _ in
+                task?.cancel()
+                task = nil
+            }
         }
     }
 
