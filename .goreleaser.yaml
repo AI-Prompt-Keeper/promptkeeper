@@ -46,7 +46,7 @@ brews:
       name: PromptKeeper Bot
       email: noreply@promptkeeper.com
     directory: Formula
-    homepage: "https://promptkeeper.com"
+    homepage: "https://github.com/AI-Prompt-Keeper/promptkeeper"
     description: "PromptKeeper CLI (prke)."
     license: "Apache-2.0"
 
