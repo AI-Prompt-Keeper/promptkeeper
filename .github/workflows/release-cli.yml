@@ -20,6 +20,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout (for local actions)
+        uses: actions/checkout@v4
+
       - name: Version pusher checkout
         id: checkout
         uses: ./.github/actions/version-pusher-checkout
