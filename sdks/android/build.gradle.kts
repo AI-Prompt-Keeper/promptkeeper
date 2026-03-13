@@ -45,7 +45,7 @@ mavenPublishing {
         description.set("Kotlin/Android SDK for PromptKeeper API — init, setKey, setPrompt, exec (streaming).")
         url.set("https://github.com/AI-Prompt-Keeper/promptkeeper")
         inceptionYear.set("2025")
-        licenses {
+        licenses { 
             license {
                 name.set("The Apache License, Version 2.0")
                 url.set("http://www.apache.org/licenses/LICENSE-2.0.txt")
