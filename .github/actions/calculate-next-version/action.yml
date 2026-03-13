@@ -13,6 +13,7 @@ inputs:
 outputs:
   next_version:
     description: Next semantic version (e.g. 1.2.4)
+    value: ${{ steps.bump.outputs.next_version }}
 runs:
   using: composite
   steps:
