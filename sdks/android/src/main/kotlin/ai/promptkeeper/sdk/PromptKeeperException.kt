@@ -13,7 +13,7 @@ sealed class PromptKeeperException(message: String, cause: Throwable? = null) : 
     }
 
     /** Server returned an error in SSE or JSON (e.g. `{ "error": "..." }`). */
-    data class Server(val message: String) : PromptKeeperException(message)
+    data class Server(val detailMessage: String) : PromptKeeperException(detailMessage)
 
     /** Network or I/O error. */
     data class Network(override val cause: Throwable) : PromptKeeperException(cause.message ?: "Network error", cause)

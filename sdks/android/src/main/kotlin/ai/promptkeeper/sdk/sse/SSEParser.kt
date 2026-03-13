@@ -3,7 +3,6 @@ package ai.promptkeeper.sdk.sse
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.primitiveContent
 
 /**
  * Parses Server-Sent Events (SSE) format: lines like "data: ...", separated by blank lines.
@@ -40,7 +39,7 @@ internal object SSEParser {
     fun parseErrorPayload(data: String): String? {
         return try {
             val obj = json.parseToJsonElement(data).jsonObject
-            obj["error"]?.jsonPrimitive?.primitiveContent
+            obj["error"]?.jsonPrimitive?.content
         } catch (_: Exception) {
             null
         }
