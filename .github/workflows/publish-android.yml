@@ -11,6 +11,15 @@ permissions:
 
 jobs:
   publish-android:
+    # Exclusion logic:
+    # 1) Ignore any commit whose message contains a skip-ci marker
+    #    ([skip ci], [skip-ci], [skip_ci]), regardless of author.
+    # 2) Ignore any commit authored by the Version pusher app, regardless of message.
+    if: >
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !contains(github.event.head_commit.message, '[skip-ci]') &&
+      !contains(github.event.head_commit.message, '[skip_ci]') &&
+      !contains(github.actor, 'version-pusher')
     runs-on: ubuntu-latest
 
     env:
@@ -31,6 +40,13 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
           cache: 'gradle'
+
+      - name: Create GitHub App token (Version pusher)
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Bump VERSION_NAME based on commit message
         working-directory: sdks/android
@@ -65,13 +81,14 @@ jobs:
 
           echo "NEW_VERSION=${new_version}" >> "$GITHUB_ENV"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "Version pusher"
+          git config user.email "version-pusher[bot]@users.noreply.github.com"
 
           if git diff --quiet; then
             echo "No changes to commit."
           else
             git commit -am "chore(android): bump version to ${new_version} [skip ci]"
+            git remote set-url origin "https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/${{ github.repository }}.git"
             git push origin HEAD:main
           fi
 
