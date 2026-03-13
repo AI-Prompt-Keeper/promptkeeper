@@ -6,7 +6,7 @@ plugins {
     id("signing")
     id("org.jetbrains.kotlin.jvm") version "1.9.22"
     id("org.jetbrains.kotlin.plugin.serialization") version "1.9.22"
-    id("io.github.gradle-nexus.publish-plugin") version "1.3.0"
+    id("com.vanniktech.maven.publish") version "0.34.0"
 }
 
 group = "ai.promptkeeper"
@@ -36,52 +36,34 @@ kotlin {
     jvmToolchain(17)
 }
 
-publishing {
-    publications {
-        create<MavenPublication>("release") {
-            from(components["java"])
+val versionName = (project.findProperty("VERSION_NAME") as String?) ?: version.toString()
 
-            groupId = "ai.promptkeeper"
-            artifactId = "android-sdk"
-            version = (project.findProperty("VERSION_NAME") as String?) ?: version.toString()
-
-            pom {
-                name.set("PromptKeeper Android SDK")
-                description.set("Kotlin/Android SDK for PromptKeeper API — init, setKey, setPrompt, exec (streaming).")
-                url.set("https://github.com/promptkeeper/promptkeeper")
-
-                licenses {
-                    license {
-                        name.set("The Apache License, Version 2.0")
-                        url.set("http://www.apache.org/licenses/LICENSE-2.0.txt")
-                    }
-                }
-
-                developers {
-                    developer {
-                        id.set("promptkeeper")
-                        name.set("PromptKeeper")
-                        email.set("dev@promptkeeper.ai")
-                    }
-                }
-
-                scm {
-                    url.set("https://github.com/promptkeeper/promptkeeper")
-                    connection.set("scm:git:https://github.com/promptkeeper/promptkeeper.git")
-                    developerConnection.set("scm:git:ssh://git@github.com/promptkeeper/promptkeeper.git")
-                }
+mavenPublishing {
+    publishToMavenCentral(automaticRelease = true)
+    coordinates("ai.promptkeeper", "android-sdk", versionName)
+    pom {
+        name.set("PromptKeeper Android SDK")
+        description.set("Kotlin/Android SDK for PromptKeeper API — init, setKey, setPrompt, exec (streaming).")
+        url.set("https://github.com/AI-Prompt-Keeper/promptkeeper")
+        inceptionYear.set("2025")
+        licenses {
+            license {
+                name.set("The Apache License, Version 2.0")
+                url.set("http://www.apache.org/licenses/LICENSE-2.0.txt")
+                distribution.set("http://www.apache.org/licenses/LICENSE-2.0.txt")
             }
         }
-    }
-}
-
-nexusPublishing {
-    repositories {
-        sonatype {
-            nexusUrl.set(uri("https://s01.oss.sonatype.org/service/local/"))
-            snapshotRepositoryUrl.set(uri("https://s01.oss.sonatype.org/content/repositories/snapshots/"))
-            username.set(System.getenv("OSSRH_USERNAME"))
-            password.set(System.getenv("OSSRH_TOKEN"))
+        developers {
+            developer {
+                id.set("promptkeeper")
+                name.set("PromptKeeper")
+                email.set("dev@promptkeeper.ai")
+            }
+        }
+        scm {
+            url.set("https://github.com/AI-Prompt-Keeper/promptkeeper")
+            connection.set("scm:git:https://github.com/AI-Prompt-Keeper/promptkeeper.git")
+            developerConnection.set("scm:git:ssh://git@github.com/AI-Prompt-Keeper/promptkeeper.git")
         }
     }
 }
@@ -99,7 +81,7 @@ signing {
         }
 
         useInMemoryPgpKeys(key, passphrase)
-        sign(publishing.publications["release"])
+        sign(publishing.publications)
     } else {
         logger.warn("GPG_PRIVATE_KEY or GPG_PASSPHRASE not set; artifacts will not be signed.")
     }

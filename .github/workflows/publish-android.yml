@@ -25,6 +25,8 @@ jobs:
     env:
       OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
       OSSRH_TOKEN: ${{ secrets.OSSRH_TOKEN }}
+      ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.OSSRH_USERNAME }}
+      ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.OSSRH_TOKEN }}
       GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
       GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
@@ -98,6 +100,6 @@ jobs:
         working-directory: sdks/android
         run: ./gradlew test --stacktrace
 
-      - name: Publish to Maven Central (Sonatype S01)
+      - name: Publish to Maven Central (Central Portal)
         working-directory: sdks/android
-        run: ./gradlew publishToSonatype closeAndReleaseStagingRepository --stacktrace
+        run: ./gradlew publishAndReleaseToMavenCentral --no-configuration-cache
