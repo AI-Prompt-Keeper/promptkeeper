@@ -26,6 +26,9 @@ jobs:
       - name: Version pusher checkout
         id: checkout
         uses: ./.github/actions/version-pusher-checkout
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Resolve current version from tags
         id: current

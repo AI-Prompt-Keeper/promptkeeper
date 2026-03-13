@@ -34,6 +34,9 @@ jobs:
       - name: Version pusher checkout
         id: checkout
         uses: ./.github/actions/version-pusher-checkout
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Set up Java 17
         uses: actions/setup-java@v4

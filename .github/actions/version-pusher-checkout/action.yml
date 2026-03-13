@@ -1,8 +1,16 @@
 # Composite action: create Version pusher app token and checkout with full history.
 # Only the Version pusher app should push new versions (tags/commits); workflows
 # must skip when actor is version-pusher to avoid re-running on those pushes.
+# App credentials are passed as inputs so they are resolved in the workflow context.
 name: Version pusher checkout
 description: Create GitHub App token and checkout repo (fetch-depth 0)
+inputs:
+  app-id:
+    description: GitHub App ID (e.g. from vars.APP_ID)
+    required: true
+  private-key:
+    description: GitHub App private key (e.g. from secrets.APP_PRIVATE_KEY)
+    required: true
 outputs:
   token:
     description: GitHub App token for Version pusher (use for push / release)
@@ -14,8 +22,8 @@ runs:
       id: app-token
       uses: actions/create-github-app-token@v1
       with:
-        app-id: ${{ vars.APP_ID }}
-        private-key: ${{ secrets.APP_PRIVATE_KEY }}
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
 
     - name: Checkout (full history)
       uses: actions/checkout@v4
