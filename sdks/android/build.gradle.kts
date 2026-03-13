@@ -1,10 +1,12 @@
+import java.util.Base64
+
 plugins {
     id("java-library")
     id("maven-publish")
     id("signing")
     id("org.jetbrains.kotlin.jvm") version "1.9.22"
     id("org.jetbrains.kotlin.plugin.serialization") version "1.9.22"
-    id("io.github.gradlenexus.publish-plugin") version "1.3.0"
+    id("io.github.gradle-nexus.publish-plugin") version "1.3.0"
 }
 
 group = "ai.promptkeeper"
@@ -90,7 +92,7 @@ signing {
 
     if (!rawKey.isNullOrBlank() && !passphrase.isNullOrBlank()) {
         val key: String = try {
-            val decoded = java.util.Base64.getDecoder().decode(rawKey)
+            val decoded = Base64.getDecoder().decode(rawKey)
             String(decoded, Charsets.UTF_8)
         } catch (_: IllegalArgumentException) {
             rawKey
