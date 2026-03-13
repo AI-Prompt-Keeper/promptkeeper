@@ -11,10 +11,7 @@ permissions:
 
 jobs:
   release-cli:
-   # Exclusion logic:
-    # 1) Ignore any commit whose message contains a skip-ci marker
-    #    ([skip ci], [skip-ci], [skip_ci]), regardless of author.
-    # 2) Ignore any commit authored by the Version pusher app, regardless of message.
+    # 1) Skip on [skip ci] markers. 2) Skip when commit is from Version pusher (only it pushes tags).
     if: >
       !contains(github.event.head_commit.message, '[skip ci]') &&
       !contains(github.event.head_commit.message, '[skip-ci]') &&
@@ -23,52 +20,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Generate GitHub App token (Version pusher)
-        id: app-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ vars.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      - name: Version pusher checkout
+        id: checkout
+        uses: ./.github/actions/version-pusher-checkout
 
-      - name: Checkout (full history)
-        uses: actions/checkout@v4
+      - name: Resolve current version from tags
+        id: current
+        run: |
+          LATEST_TAG=$(git tag -l 'v*.*.*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "current_version=0.0.0" >> "$GITHUB_OUTPUT"
+          else
+            echo "current_version=${LATEST_TAG#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Calculate next version
+        id: semver
+        uses: ./.github/actions/calculate-next-version
         with:
-          token: ${{ steps.app-token.outputs.token }}
-          persist-credentials: false
-          fetch-depth: 0
+          current_version: ${{ steps.current.outputs.current_version }}
+          commit_message: ${{ github.event.head_commit.message }}
+
+      - name: Push git tag
+        uses: ./.github/actions/push-git-tag
+        with:
+          version: ${{ steps.semver.outputs.next_version }}
+          token: ${{ steps.checkout.outputs.token }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: 'stable'
 
-      - name: Calculate semantic version
-        id: semver
-        uses: PaulHatch/semantic-version@v5.4.0
-        with:
-          major_pattern: "[major]"
-          minor_pattern: "[minor]"
-          version_format: "${major}.${minor}.${patch}"
-
-      - name: Create and push tag
-        env:
-          VERSION: ${{ steps.semver.outputs.version }}
-          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+      - name: Install Snapcraft
         run: |
-          if [ -z "$VERSION" ]; then
-            echo "Version is empty; aborting."
-            exit 1
-          fi
-          git config user.name "Version pusher"
-          git config user.email "version-pusher[bot]@users.noreply.github.com"
-          TAG="v${VERSION}"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists locally; skipping create."
-          else
-            git tag "$TAG"
-          fi
-          git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${{ github.repository }}.git"
-          git push origin "$TAG"
+          sudo snap install snapcraft --classic
+          echo "/snap/bin" >> $GITHUB_PATH
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
@@ -76,13 +63,12 @@ jobs:
           version: latest
           args: release --clean
         env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.checkout.outputs.token }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
 
       - name: Upload dist as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: prke-dist-v${{ steps.semver.outputs.version }}
+          name: prke-dist-v${{ steps.semver.outputs.next_version }}
           path: dist/**
-

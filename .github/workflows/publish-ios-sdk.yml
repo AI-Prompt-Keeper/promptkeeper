@@ -11,59 +11,52 @@ permissions:
 
 jobs:
   publish:
+    # 1) Skip on [skip ci]. 2) Skip when run was triggered by Version pusher (only it pushes tags).
+    if: >
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !contains(github.event.head_commit.message, '[skip-ci]') &&
+      !contains(github.event.head_commit.message, '[skip_ci]') &&
+      !contains(github.actor, 'version-pusher')
     runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Get latest version and increment by commit message
-        id: version
-        env:
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
+    steps:
+      - name: Version pusher checkout
+        id: checkout
+        uses: ./.github/actions/version-pusher-checkout
+
+      - name: Resolve current version from tags
+        id: current
         run: |
           LATEST_TAG=$(git tag -l 'v*.*.*' --sort=-v:refname | head -1)
           if [ -z "$LATEST_TAG" ]; then
-            MAJOR=0
-            MINOR=0
-            PATCH=0
+            echo "current_version=0.0.0" >> "$GITHUB_OUTPUT"
           else
-            LATEST="${LATEST_TAG#v}"
-            MAJOR=$(echo "$LATEST" | cut -d. -f1)
-            MINOR=$(echo "$LATEST" | cut -d. -f2)
-            PATCH=$(echo "$LATEST" | cut -d. -f3)
+            echo "current_version=${LATEST_TAG#v}" >> "$GITHUB_OUTPUT"
           fi
-          if echo "$COMMIT_MSG" | grep -q '\[major\]'; then
-            MAJOR=$((MAJOR + 1))
-            MINOR=0
-            PATCH=0
-          elif echo "$COMMIT_MSG" | grep -q '\[minor\]'; then
-            MINOR=$((MINOR + 1))
-            PATCH=0
-          else
-            PATCH=$((PATCH + 1))
-          fi
-          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
-          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-          echo "New version: $NEW_VERSION"
+
+      - name: Calculate next version
+        id: version
+        uses: ./.github/actions/calculate-next-version
+        with:
+          current_version: ${{ steps.current.outputs.current_version }}
+          commit_message: ${{ github.event.head_commit.message }}
+
+      - name: Push git tag
+        uses: ./.github/actions/push-git-tag
+        with:
+          version: ${{ steps.version.outputs.next_version }}
+          token: ${{ steps.checkout.outputs.token }}
 
       - name: Build Swift package
         run: |
           cd sdks/ios
           swift build
 
-      - name: Create and push tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          TAG="v${{ steps.version.outputs.new_version }}"
-          git tag -a "$TAG" -m "Release $TAG"
-          git push origin "$TAG"
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ steps.checkout.outputs.token }}
         with:
-          tag_name: v${{ steps.version.outputs.new_version }}
-          name: Release v${{ steps.version.outputs.new_version }}
+          tag_name: v${{ steps.version.outputs.next_version }}
+          name: Release v${{ steps.version.outputs.next_version }}
           generate_release_notes: true

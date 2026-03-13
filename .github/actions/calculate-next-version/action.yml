@@ -1,0 +1,41 @@
+# Composite action: compute next semver from current version and commit message.
+# Rules: [major] -> bump major; [minor] -> bump minor; else -> bump patch.
+# Patterns are case-insensitive.
+name: Calculate next version
+description: Bump semver from commit message ([major], [minor], or patch)
+inputs:
+  current_version:
+    description: Current semver string (e.g. 1.2.3 or 0.0.0)
+    required: true
+  commit_message:
+    description: Commit message to inspect for [major] / [minor]
+    required: true
+outputs:
+  next_version:
+    description: Next semantic version (e.g. 1.2.4)
+runs:
+  using: composite
+  steps:
+    - name: Compute next version
+      id: bump
+      shell: bash
+      run: |
+        current="${{ inputs.current_version }}"
+        msg="${{ inputs.commit_message }}"
+        IFS='.' read -r major minor patch <<< "$current"
+        major=${major:-0}
+        minor=${minor:-0}
+        patch=${patch:-0}
+        if echo "$msg" | grep -qi '\[major\]'; then
+          major=$((major + 1))
+          minor=0
+          patch=0
+        elif echo "$msg" | grep -qi '\[minor\]'; then
+          minor=$((minor + 1))
+          patch=0
+        else
+          patch=$((patch + 1))
+        fi
+        next="${major}.${minor}.${patch}"
+        echo "next_version=$next" >> "$GITHUB_OUTPUT"
+        echo "Next version: $next"

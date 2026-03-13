@@ -11,10 +11,7 @@ permissions:
 
 jobs:
   publish-android:
-    # Exclusion logic:
-    # 1) Ignore any commit whose message contains a skip-ci marker
-    #    ([skip ci], [skip-ci], [skip_ci]), regardless of author.
-    # 2) Ignore any commit authored by the Version pusher app, regardless of message.
+    # 1) Skip on [skip ci]. 2) Skip when commit is from Version pusher (only it bumps VERSION_NAME).
     if: >
       !contains(github.event.head_commit.message, '[skip ci]') &&
       !contains(github.event.head_commit.message, '[skip-ci]') &&
@@ -31,19 +28,9 @@ jobs:
       GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
     steps:
-      - name: Create GitHub App token (Version pusher)
-        id: app-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ vars.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-
-      - name: Checkout (full history)
-        uses: actions/checkout@v4
-        with:
-          token: ${{ steps.app-token.outputs.token }}
-          persist-credentials: false
-          fetch-depth: 0
+      - name: Version pusher checkout
+        id: checkout
+        uses: ./.github/actions/version-pusher-checkout
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -52,47 +39,42 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Bump VERSION_NAME based on commit message
+      - name: Read current version from gradle.properties
+        id: current
         working-directory: sdks/android
         run: |
-          set -e
-
           current_version=$(grep '^VERSION_NAME=' gradle.properties | cut -d'=' -f2)
           if [ -z "$current_version" ]; then
-            echo "VERSION_NAME not found in gradle.properties"; exit 1
+            echo "VERSION_NAME not found in gradle.properties"
+            exit 1
           fi
+          echo "current_version=$current_version" >> "$GITHUB_OUTPUT"
 
-          IFS='.' read -r major minor patch <<< "$current_version"
+      - name: Calculate next version
+        id: semver
+        uses: ./.github/actions/calculate-next-version
+        with:
+          current_version: ${{ steps.current.outputs.current_version }}
+          commit_message: ${{ github.event.head_commit.message }}
 
-          commit_msg="${{ github.event.head_commit.message }}"
-
-          if echo "$commit_msg" | grep -qi '\[major\]'; then
-            major=$((major + 1))
-            minor=0
-            patch=0
-          elif echo "$commit_msg" | grep -qi '\[minor\]'; then
-            minor=$((minor + 1))
-            patch=0
-          else
-            patch=$((patch + 1))
-          fi
-
-          new_version="${major}.${minor}.${patch}"
-
-          echo "Bumping VERSION_NAME: $current_version -> $new_version"
-
-          sed -i "s/^VERSION_NAME=.*/VERSION_NAME=${new_version}/" gradle.properties
-
-          echo "NEW_VERSION=${new_version}" >> "$GITHUB_ENV"
-
+      - name: Bump VERSION_NAME and push commit
+        working-directory: sdks/android
+        env:
+          NEW_VERSION: ${{ steps.semver.outputs.next_version }}
+          APP_TOKEN: ${{ steps.checkout.outputs.token }}
+        run: |
+          set -e
+          sed -i "s/^VERSION_NAME=.*/VERSION_NAME=${NEW_VERSION}/" gradle.properties
+          echo "Bumping VERSION_NAME -> ${NEW_VERSION}"
+          echo "NEW_VERSION=${NEW_VERSION}" >> "$GITHUB_ENV"
           git config user.name "Version pusher"
           git config user.email "version-pusher[bot]@users.noreply.github.com"
-
           if git diff --quiet; then
             echo "No changes to commit."
           else
-            git commit -am "chore(android): bump version to ${new_version} [skip ci]"
-            git remote set-url origin "https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/${{ github.repository }}.git"
+            git add gradle.properties
+            git commit -m "chore(android): bump version to ${NEW_VERSION} [skip ci]"
+            git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${{ github.repository }}.git"
             git push origin HEAD:main
           fi
 

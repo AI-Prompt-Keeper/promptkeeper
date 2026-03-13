@@ -1,0 +1,40 @@
+# Composite action: create and push a git tag as Version pusher.
+# Idempotent: if tag already exists locally, skip create (push may still run).
+name: Push git tag
+description: Create and push version tag as Version pusher app
+inputs:
+  version:
+    description: Semantic version (e.g. 1.2.3); tag will be {prefix}{version}
+    required: true
+  token:
+    description: GitHub token (e.g. Version pusher app token) used to push
+    required: true
+  tag_prefix:
+    description: Prefix for the tag (e.g. v -> v1.2.3)
+    required: false
+    default: 'v'
+runs:
+  using: composite
+  steps:
+    - name: Create and push tag
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        APP_TOKEN: ${{ inputs.token }}
+        PREFIX: ${{ inputs.tag_prefix }}
+        REPO: ${{ github.repository }}
+      run: |
+        if [ -z "$VERSION" ]; then
+          echo "Version is empty; aborting."
+          exit 1
+        fi
+        git config user.name "Version pusher"
+        git config user.email "version-pusher[bot]@users.noreply.github.com"
+        TAG="${PREFIX}${VERSION}"
+        if git rev-parse "$TAG" >/dev/null 2>&1; then
+          echo "Tag $TAG already exists locally; skipping create."
+        else
+          git tag "$TAG"
+        fi
+        git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${REPO}.git"
+        git push origin "$TAG"
