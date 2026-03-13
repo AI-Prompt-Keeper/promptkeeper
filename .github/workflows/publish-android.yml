@@ -30,7 +30,6 @@ jobs:
 
     steps:
       - name: Create GitHub App token (Version pusher)
-        working-directory: sdks/android
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
