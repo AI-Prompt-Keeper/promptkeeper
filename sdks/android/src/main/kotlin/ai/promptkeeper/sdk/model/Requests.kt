@@ -23,4 +23,4 @@ internal data class ExecuteRequest(
     val variables: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
     val provider: String? = null,
     val model: String? = null
-) 
+)
