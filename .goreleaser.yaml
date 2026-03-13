@@ -62,14 +62,15 @@ snapcrafts:
       prke:
         command: prke
 
-winget:
-  - id: PromptKeeper.prke
-    name: prke
-    publisher: PromptKeeper
-    short_description: "PromptKeeper CLI"
-    license: Apache-2.0
-    repository:
-      owner: microsoft
-      name: winget-pkgs
-      token: "{{ .Env.GITHUB_TOKEN }}"
+# Winget: disabled for now; will be enabled later.
+# winget:
+#   - name: prke
+#     package_identifier: PromptKeeper.prke
+#     publisher: PromptKeeper
+#     short_description: "PromptKeeper CLI"
+#     license: Apache-2.0
+#     repository:
+#       owner: microsoft
+#       name: winget-pkgs
+#       token: "{{ .Env.GITHUB_TOKEN }}"
 
