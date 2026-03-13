@@ -90,3 +90,8 @@ signing {
 tasks.test {
     useJUnit()
 }
+
+// If present, ensure any Maven metadata generation task runs after javadoc jar
+tasks.matching { it.name == "generateMetadataFileForMavenPublication" }.configureEach {
+    dependsOn("plainJavadocJar")
+}
