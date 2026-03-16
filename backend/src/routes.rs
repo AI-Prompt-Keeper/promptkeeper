@@ -45,6 +45,20 @@ pub mod request {
         pub model: Option<String>,
     }
 
+    /// POST /v1/execute-raw body: raw prompt text, no stored function. Sent directly to provider.
+    #[derive(Debug, Clone, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct ExecuteRawRequest {
+        /// Raw prompt text. May include Handlebars placeholders if variables is provided.
+        pub prompt: String,
+        /// Provider to use (e.g. "openai", "anthropic", "gemini"). Required. User must have a key for this provider (POST /v1/keys).
+        pub provider: String,
+        /// Optional: model override. If omitted, provider default is used.
+        pub model: Option<String>,
+        /// Optional: variable substitutions for Handlebars in prompt. Default: {}.
+        #[serde(default)]
+        pub variables: HashMap<String, serde_json::Value>,
+    }
 }
 
 /// In-memory rate limiter: one register per IP per window (e.g. 10 minutes).
@@ -220,6 +234,7 @@ pub async fn app_router(secrets: Option<Arc<SecretEnveloper>>, db: sqlx::PgPool)
     Ok(Router::new()
         .route("/health", get(health_handler))
         .route("/v1/execute", post(execute_handler))
+        .route("/v1/execute-raw", post(execute_raw_handler))
         .route("/v1/auth/register-challenge", get(register_challenge_handler))
         .route("/v1/auth/register", post(register_handler))
         .route("/v1/auth/login", post(login_handler))
@@ -658,6 +673,72 @@ async fn execute_handler(
                 Box::pin(futures_util::stream::iter(vec![Ok(event)]))
             }
         };
+
+    Sse::new(event_stream)
+}
+
+/// POST /v1/execute-raw: raw prompt text, no stored function. Provider required; model and variables optional.
+/// Requires auth. Streams SSE like /v1/execute. If user has no key for the provider, returns error in SSE.
+async fn execute_raw_handler(
+    State(state): State<AppState>,
+    auth: Auth,
+    body: Bytes,
+) -> Sse<impl Stream<Item = Result<Event, axum::Error>> + Send + 'static> {
+    let execute_state = state.execute;
+    let start = Instant::now();
+
+    type SseStream = Pin<Box<dyn Stream<Item = Result<Event, axum::Error>> + Send + 'static>>;
+
+    let req: crate::routes::request::ExecuteRawRequest = match serde_json::from_slice(body.as_ref()) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(err = %e, "execute-raw request body parse failed");
+            let event = Event::default()
+                .json_data(serde_json::json!({ "error": e.to_string() }))
+                .unwrap();
+            let s: SseStream = Box::pin(futures_util::stream::iter(vec![Ok(event)]));
+            return Sse::new(s);
+        }
+    };
+
+    let provider = req.provider.clone();
+    let span = tracing::info_span!("execute_raw", provider = %provider);
+
+    let context_id = auth.workspace_id.to_string();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        crate::execute::execute_raw_request(
+            execute_state,
+            req,
+            &context_id,
+            auth.user_id,
+            auth.workspace_id,
+        )
+        .instrument(span),
+    )
+    .await;
+
+    let event_stream: SseStream = match result {
+        Ok(Ok(stream)) => {
+            let latency_ms = start.elapsed().as_millis();
+            tracing::info!(provider = %provider, latency_ms = %latency_ms, "execute-raw stream ready");
+            Box::pin(stream)
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(err = %e, "execute-raw failed");
+            let event = crate::execute::execute_error_to_event(&e);
+            Box::pin(futures_util::stream::iter(vec![Ok(event)]))
+        }
+        Err(_) => {
+            tracing::warn!("execute-raw exceeded 60s timeout");
+            let event = crate::execute::execute_error_to_event(
+                &crate::execute::ExecuteError::Other(
+                    "execute-raw exceeded 60s client timeout".into(),
+                ),
+            );
+            Box::pin(futures_util::stream::iter(vec![Ok(event)]))
+        }
+    };
 
     Sse::new(event_stream)
 }
