@@ -101,10 +101,10 @@ Runs the execute pipeline: resolves function config, renders the prompt with var
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `function_id` | string | Yes | Function identifier (e.g. `default`, `customer_support_reply`). Used to look up prompt template and provider config. |
-
-**Auth:** Requires `Authorization: Bearer <api_token>` or `X-API-Key: <api_token>`. Use the API key returned at registration (e.g. `pk_...`) or a session token from login.
 | `variables` | object | No | Map of variable names to JSON values. Injected into the Handlebars prompt template. Default: `{}`. |
 | `provider` | string | No | Preferred provider (e.g. `"openai"`, `"anthropic"`, `"gemini"`). If in the function's provider list, tried first. |
+
+**Auth:** Requires `Authorization: Bearer <api_token>` or `X-API-Key: <api_token>`. Use the API key returned at registration (e.g. `pk_...`) or a session token from login.
 
 **Example request:**
 ```json
@@ -126,6 +126,43 @@ Runs the execute pipeline: resolves function config, renders the prompt with var
 ```
 
 Common errors: parse failure, function not found, provider error, timeout (`"execute exceeded 30s client timeout"`). HTTP status remains 200; errors are delivered in SSE `data`.
+
+---
+
+### 1b. Execute raw — LLM with inline prompt (no stored function)
+
+Sends a **raw prompt** directly to a provider. No `function_id`; the prompt is **not stored**. Use this for one-off requests when you don't have (or don't want to use) a stored function. Same auth and SSE stream shape as `/v1/execute`.
+
+| Property | Value |
+|----------|--------|
+| **Method** | `POST` |
+| **Path** | `/v1/execute-raw` |
+| **Request** | JSON body |
+| **Response** | `text/event-stream` (SSE) |
+| **Auth** | Required: `Authorization: Bearer <api_token>` or `X-API-Key: <api_token>` |
+
+**Request body (JSON):**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `prompt` | string | Yes | Raw prompt text. May include Handlebars placeholders (e.g. `{{name}}`) if `variables` is provided. |
+| `provider` | string | Yes | Provider to use (e.g. `"openai"`, `"anthropic"`, `"gemini"`). User must have a key for this provider (stored via POST /v1/keys). |
+| `model` | string | No | Model override (e.g. `"gpt-4o"`, `"claude-3-5-sonnet-20240620"`). If omitted, provider default is used. |
+| `variables` | object | No | Map of variable names to JSON values. Injected into the prompt via Handlebars. Default: `{}`. |
+
+**Example request:**
+```json
+{
+  "prompt": "Summarize in one sentence: {{text}}",
+  "provider": "openai",
+  "model": "gpt-4o-mini",
+  "variables": { "text": "The quick brown fox jumps over the lazy dog." }
+}
+```
+
+**Success response:** SSE stream; same format as `/v1/execute` (events with `content` and `provider`).
+
+**Error response:** Delivered in SSE (HTTP 200). Examples: missing or invalid body; empty or unsupported `provider`; **provider key not found** (user has not stored a key for that provider via POST /v1/keys); render error; provider/LLM error; timeout.
 
 ---
 
@@ -317,12 +354,13 @@ Verifies email and password, creates a session, and returns a session token. Use
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/health` | — | Health check |
-| POST | `/v1/execute` | API key | Run function, stream LLM response |
+| POST | `/v1/execute` | API key | Run stored function, stream LLM response |
+| POST | `/v1/execute-raw` | API key | Run raw prompt (no stored function), stream LLM response |
 | POST | `/v1/keys` | API key | Store provider API key (KMS required) |
 | POST | `/v1/prompts` | API key | Store prompt template (KMS required) |
 | POST | `/v1/auth/register` | — | Create user, workspace, and API key |
 | POST | `/v1/auth/login` | — | Create session token |
 
-**Note:** Execute and Put are gated by auth. Keys → `api_keys`; Prompts → `prompt_versions` + deployments.
+**Note:** Execute, execute-raw, and Put are gated by auth. Execute-raw requires a stored key for the requested provider (POST /v1/keys). Keys → `api_keys`; Prompts → `prompt_versions` + deployments.
 
 For full request/response schemas and examples, see **backend-specs.md**.
