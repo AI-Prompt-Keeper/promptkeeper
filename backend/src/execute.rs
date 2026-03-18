@@ -17,8 +17,11 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 /// Unified chunk type for all providers (OpenAI/Anthropic via LangChain, Gemini via REST).
+/// For image generation, image_base64 is set and content may be empty.
 struct StreamChunk {
     content: String,
+    /// When set, backend sends SSE with b64_json for client to display image.
+    image_base64: Option<String>,
 }
 
 /// Execute state: function store, DB pool, and KMS enveloper for API key decryption.
@@ -194,7 +197,12 @@ pub async fn execute_with_provider(
             _ => ExecuteError::Other(e.to_string()),
         })?;
 
-    let model = resolve_model(model_override, meta, &provider);
+    let mut model = resolve_model(model_override, meta, &provider);
+    // Default model requirement for Anthropic when the caller doesn't specify one.
+    // This ensures consistent behavior even if `langchain-rust`'s Claude default changes.
+    if provider.as_str() == "anthropic" && model.is_none() {
+        model = Some("claude-sonnet-4-6".to_string());
+    }
 
     let messages = vec![langchain_rust::schemas::messages::Message::new_human_message(
         rendered.to_string(),
@@ -220,6 +228,7 @@ pub async fn execute_with_provider(
                 Box::pin(s.map(move |r| {
                     r.map(|d| StreamChunk {
                         content: d.content,
+                        image_base64: None,
                     })
                     .map_err(|e| ExecuteError::ProviderError {
                         provider: p.clone(),
@@ -245,6 +254,7 @@ pub async fn execute_with_provider(
                 Box::pin(s.map(move |r| {
                     r.map(|d| StreamChunk {
                         content: d.content,
+                        image_base64: None,
                     })
                     .map_err(|e| ExecuteError::ProviderError {
                         provider: p.clone(),
@@ -254,8 +264,16 @@ pub async fn execute_with_provider(
                 }))
             }
             "gemini" => {
-                let gemini_stream = stream_gemini(rendered, &api_key, model.as_deref(), &provider)?;
-                Box::pin(gemini_stream)
+                let model_name = model
+                    .as_deref()
+                    .unwrap_or("gemini-2.0-flash");
+                if is_gemini_image_model(model_name) {
+                    let stream = generate_gemini_image(rendered, &api_key, model_name, &provider)?;
+                    Box::pin(stream)
+                } else {
+                    let gemini_stream = stream_gemini(rendered, &api_key, model.as_deref(), &provider)?;
+                    Box::pin(gemini_stream)
+                }
             }
             _ => {
                 let list = get_supported_providers_list(&state.db)
@@ -271,17 +289,27 @@ pub async fn execute_with_provider(
     let s = stream.map(move |chunk_result| {
         match chunk_result {
             Ok(stream_data) => {
-                let content = stream_data.content;
-                if content.is_empty() {
-                    Ok(Event::default().data(""))
-                } else {
+                if let Some(ref b64) = stream_data.image_base64 {
                     let ev = serde_json::json!({
-                        "content": content,
+                        "b64_json": b64,
                         "provider": provider_owned
                     });
                     Event::default()
                         .json_data(ev)
                         .map_err(|e| axum::Error::from(e))
+                } else {
+                    let content = stream_data.content;
+                    if content.is_empty() {
+                        Ok(Event::default().data(""))
+                    } else {
+                        let ev = serde_json::json!({
+                            "content": content,
+                            "provider": provider_owned
+                        });
+                        Event::default()
+                            .json_data(ev)
+                            .map_err(|e| axum::Error::from(e))
+                    }
                 }
             }
             Err(e) => {
@@ -298,6 +326,109 @@ pub async fn execute_with_provider(
     });
 
     Ok(Box::pin(s))
+}
+
+/// True if the model is a Gemini image-generation model (e.g. gemini-2.5-flash-image, gemini-3.1-flash-image-preview).
+fn is_gemini_image_model(model: &str) -> bool {
+    let m = model.to_lowercase();
+    m.contains("flash-image")
+        || m.contains("pro-image")
+        || m == "gemini-2.5-flash-image"
+        || m.starts_with("gemini-3.1-flash-image")
+        || m.starts_with("gemini-3-pro-image")
+}
+
+/// Generate image(s) via Gemini generateContent (non-streaming). Parses response parts for inline_data.data (base64) and yields one chunk per image.
+fn generate_gemini_image(
+    prompt: &str,
+    api_key: &str,
+    model: &str,
+    provider: &str,
+) -> Result<
+    Pin<Box<dyn Stream<Item = Result<StreamChunk, ExecuteError>> + Send>>,
+    ExecuteError,
+> {
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+        model
+    );
+    let body = serde_json::json!({
+        "contents": [{ "parts": [{ "text": prompt }] }],
+        "generationConfig": { "responseModalities": ["TEXT", "IMAGE"] }
+    });
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| ExecuteError::Other(e.to_string()))?;
+
+    let req = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("x-goog-api-key", api_key)
+        .body(body.to_string());
+
+    let provider_owned = provider.to_string();
+    let stream = async_stream::stream! {
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                yield Err(ExecuteError::ProviderError {
+                    provider: provider_owned.clone(),
+                    message: e.to_string(),
+                    details: None,
+                });
+                return;
+            }
+        };
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            yield Err(ExecuteError::ProviderError {
+                provider: provider_owned.clone(),
+                message: format!("{}: {}", status, body),
+                details: None,
+            });
+            return;
+        }
+        let json: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                yield Err(ExecuteError::ProviderError {
+                    provider: provider_owned.clone(),
+                    message: e.to_string(),
+                    details: None,
+                });
+                return;
+            }
+        };
+        let parts = json
+            .get("candidates")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("content"))
+            .and_then(|c| c.get("parts"));
+        let parts = match parts.and_then(|p| p.as_array()) {
+            Some(p) => p,
+            None => return,
+        };
+        for part in parts {
+            let data = part
+                .get("inline_data")
+                .or_else(|| part.get("inlineData"))
+                .and_then(|d| d.get("data"))
+                .and_then(|d| d.as_str());
+            if let Some(b64) = data {
+                if !b64.is_empty() {
+                    yield Ok(StreamChunk {
+                        content: String::new(),
+                        image_base64: Some(b64.to_string()),
+                    });
+                }
+            }
+        }
+    };
+
+    Ok(Box::pin(stream))
 }
 
 /// Stream completion from Google Gemini API (Generative Language API).
@@ -396,6 +527,7 @@ fn stream_gemini(
                     if !text.is_empty() {
                         yield Ok(StreamChunk {
                             content: text.to_string(),
+                            image_base64: None,
                         });
                     }
                 }
