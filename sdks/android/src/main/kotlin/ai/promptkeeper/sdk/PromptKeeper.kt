@@ -1,5 +1,6 @@
 package ai.promptkeeper.sdk
 
+import ai.promptkeeper.sdk.model.ExecuteRawRequest
 import ai.promptkeeper.sdk.model.ExecuteRequest
 import ai.promptkeeper.sdk.model.PutKeyRequest
 import ai.promptkeeper.sdk.model.PutKeyResponse
@@ -9,6 +10,7 @@ import ai.promptkeeper.sdk.sse.SSEParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -99,7 +101,8 @@ class PromptKeeper internal constructor(
     }
 
     /**
-     * Executes a function: resolves prompt, injects variables, calls the configured LLM, and streams the response.
+     * Executes a **stored function**: resolves the prompt template by id, injects variables, calls the configured LLM,
+     * and streams the response.
      *
      * Each emitted value is the raw SSE `data` payload (always a string). Content type depends on the provider and function:
      * - **Chat/completions**: Usually JSON stream chunks (e.g. OpenAI `choices[].delta.content`, Anthropic text deltas).
@@ -109,7 +112,7 @@ class PromptKeeper internal constructor(
      *
      * The transport is always text (SSE); binary media are embedded as base64 or URLs inside that text.
      *
-     * @param functionId Function identifier (e.g. `"default"`, `"customer_support_reply"`).
+     * @param functionId Function identifier of a prompt stored via [setPrompt] (e.g. `"default"`, `"customer_support_reply"`).
      * @param variables Optional map of variable names to string values (Handlebars). Default: empty.
      * @param provider Optional preferred provider (e.g. `"openai"`, `"anthropic"`).
      * @param model Optional model override.
@@ -137,40 +140,105 @@ class PromptKeeper internal constructor(
             .post(body.toRequestBody(jsonMediaType))
             .setAuth()
             .build()
-        withContext(Dispatchers.IO) {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw PromptKeeperException.Http(response.code, response.body?.bytes())
-                }
-                val bodyStream = response.body?.byteStream() ?: return@use
-                BufferedReader(InputStreamReader(bodyStream)).use { reader ->
-                    var buffer = StringBuilder()
-                    reader.useLines { lines ->
-                        for (line in lines) {
-                            buffer.append(line).append("\n")
-                            if (buffer.endsWith("\n\n")) {
-                                for (data in SSEParser.parse(buffer.toString())) {
-                                    if (data.isEmpty()) continue
-                                    val err = SSEParser.parseErrorPayload(data)
-                                    if (err != null) throw PromptKeeperException.Server(err)
-                                    emit(data)
-                                }
-                                buffer = StringBuilder()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw PromptKeeperException.Http(response.code, response.body?.bytes())
+            }
+            val bodyStream = response.body?.byteStream() ?: return@use
+            BufferedReader(InputStreamReader(bodyStream)).use { reader ->
+                var buffer = StringBuilder()
+                reader.useLines { lines ->
+                    for (line in lines) {
+                        buffer.append(line).append("\n")
+                        if (buffer.endsWith("\n\n")) {
+                            for (data in SSEParser.parse(buffer.toString())) {
+                                if (data.isEmpty()) continue
+                                val err = SSEParser.parseErrorPayload(data)
+                                if (err != null) throw PromptKeeperException.Server(err)
+                                emit(data)
                             }
+                            buffer = StringBuilder()
                         }
                     }
-                    if (buffer.isNotEmpty()) {
-                        for (data in SSEParser.parse(buffer.toString())) {
-                            if (data.isEmpty()) continue
-                            val err = SSEParser.parseErrorPayload(data)
-                            if (err != null) throw PromptKeeperException.Server(err)
-                            emit(data)
-                        }
+                }
+                if (buffer.isNotEmpty()) {
+                    for (data in SSEParser.parse(buffer.toString())) {
+                        if (data.isEmpty()) continue
+                        val err = SSEParser.parseErrorPayload(data)
+                        if (err != null) throw PromptKeeperException.Server(err)
+                        emit(data)
                     }
                 }
             }
         }
-    }
+    }.flowOn(Dispatchers.IO)
+
+    /**
+     * Executes a **raw text prompt** without a stored function. Calls the backend `POST /v1/execute-raw`.
+     *
+     * The prompt is sent directly to the provider; nothing is stored. Same SSE streaming semantics as [exec].
+     * The backend requires [provider]; it must be non-blank.
+     *
+     * @param prompt Raw prompt text. May include Handlebars placeholders if [variables] is provided.
+     * @param variables Optional variable substitutions (Handlebars). Default: empty.
+     * @param provider Provider to use (e.g. `"openai"`, `"anthropic"`, `"gemini"`). Required.
+     * @param model Optional model override.
+     * @return Flow of SSE data chunks (provider payload strings). On server error, throws [PromptKeeperException.Server].
+     */
+    fun execPrompt(
+        prompt: String,
+        variables: Map<String, String> = emptyMap(),
+        provider: String,
+        model: String? = null
+    ): Flow<String> = flow {
+        val variablesJson = buildJsonObject {
+            variables.forEach { (k, v) -> put(k, JsonPrimitive(v)) }
+        }
+        val body = json.encodeToString(
+            ExecuteRawRequest(
+                prompt = prompt,
+                provider = provider,
+                model = model,
+                variables = variablesJson
+            )
+        )
+        val request = Request.Builder()
+            .url("$baseUrl/v1/execute-raw")
+            .post(body.toRequestBody(jsonMediaType))
+            .setAuth()
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw PromptKeeperException.Http(response.code, response.body?.bytes())
+            }
+            val bodyStream = response.body?.byteStream() ?: return@use
+            BufferedReader(InputStreamReader(bodyStream)).use { reader ->
+                var buffer = StringBuilder()
+                reader.useLines { lines ->
+                    for (line in lines) {
+                        buffer.append(line).append("\n")
+                        if (buffer.endsWith("\n\n")) {
+                            for (data in SSEParser.parse(buffer.toString())) {
+                                if (data.isEmpty()) continue
+                                val err = SSEParser.parseErrorPayload(data)
+                                if (err != null) throw PromptKeeperException.Server(err)
+                                emit(data)
+                            }
+                            buffer = StringBuilder()
+                        }
+                    }
+                }
+                if (buffer.isNotEmpty()) {
+                    for (data in SSEParser.parse(buffer.toString())) {
+                        if (data.isEmpty()) continue
+                        val err = SSEParser.parseErrorPayload(data)
+                        if (err != null) throw PromptKeeperException.Server(err)
+                        emit(data)
+                    }
+                }
+            }
+        }
+    }.flowOn(Dispatchers.IO)
 
     private fun Request.Builder.setAuth(): Request.Builder {
         addHeader("Authorization", "Bearer ${apiKeyHolder.apiKey}")

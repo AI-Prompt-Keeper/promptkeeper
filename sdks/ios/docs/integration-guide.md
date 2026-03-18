@@ -121,9 +121,9 @@ let response = try await client.setPrompt(
 
 ---
 
-## 6. Executing a function (`exec`) — streaming
+## 6. Executing a stored function (`exec`) — streaming
 
-Run a named function: the server resolves the prompt, injects variables, calls the configured LLM, and streams the response.
+Run a **stored** function by id: the server resolves the prompt template, injects variables, calls the configured LLM, and streams the response. Use this when you have already stored a prompt via `setPrompt`.
 
 **Signature:**
 
@@ -186,6 +186,48 @@ do {
 
 ---
 
+## 6b. Executing a raw prompt (`execPrompt`) — streaming
+
+Run a **raw text prompt** without storing it as a function first. The backend receives the prompt and optional variables/provider/model and streams the response. Use endpoint `POST /v1/execute-raw` (same SSE shape as `exec`); use this for ad-hoc or one-off calls.
+
+**Signature:**
+
+```swift
+func execPrompt(
+    prompt: String,
+    variables: [String: String]? = nil,
+    provider: String? = nil,
+    model: String? = nil
+) -> AsyncThrowingStream<ExecStreamEvent, Error>
+```
+
+**Parameters:**
+
+| Parameter   | Type            | Description                                           |
+|------------|-----------------|-------------------------------------------------------|
+| `prompt`   | String          | Raw prompt text to execute (not stored on the server). |
+| `variables`| [String: String]?| Optional Handlebars variables. Default `nil` → empty. |
+| `provider` | String?         | Preferred provider (e.g. `"openai"`, `"anthropic"`, `"gemini"`). Backend requires a provider for raw execution. |
+| `model`    | String?         | Model override.                                       |
+
+**Returns:** Same as `exec`: `AsyncThrowingStream<ExecStreamEvent, Error>`. Each element is `ExecStreamEvent.chunk(String)` (provider payload). Errors are thrown or delivered in SSE `{ "error": "..." }`.
+
+**Example:**
+
+```swift
+let stream = client.execPrompt(
+    prompt: "You are a helpful assistant. Reply briefly: What is 2+2?",
+    variables: nil,
+    provider: "openai",
+    model: nil
+)
+for try await event in stream {
+    if case .chunk(let data) = event { process(data) }
+}
+```
+
+---
+
 ## 7. Error handling
 
 All throwing APIs use the SDK’s error type or standard Swift errors.
@@ -221,7 +263,7 @@ do {
 
 | Type | Description |
 |------|-------------|
-| `PromptKeeper` | Main client. Create with `init(apiKey:)`. |
+| `PromptKeeper` | Main client. Create with `init(apiKey:)`. Methods: `setKey`, `setPrompt`, `exec`, `execPrompt`. |
 | `PutKeyResponse` | `versionId`, `createdAt`, `kmsKeyArn`, `fingerprint`. |
 | `PutPromptResponse` | Same shape as `PutKeyResponse`. |
 | `ExecStreamEvent` | `.chunk(String)` — one streamed data chunk. |
@@ -233,8 +275,8 @@ All of these are `Sendable` where applicable. Use from any async context (MainAc
 
 ## 9. Concurrency and lifecycle
 
-- **Async only:** `setKey`, `setPrompt`, and the `exec` stream are async; call from `async` functions or `Task`.
+- **Async only:** `setKey`, `setPrompt`, and the `exec` / `execPrompt` streams are async; call from `async` functions or `Task`.
 - **No persistence:** The SDK does not write the API key or secrets to disk. Create a new `PromptKeeper(apiKey:)` each run if the key is provided at launch.
-- **Stream cancellation:** When the consumer stops iterating the `AsyncThrowingStream` from `exec`, the underlying request is cancelled.
+- **Stream cancellation:** When the consumer stops iterating the `AsyncThrowingStream` from `exec` or `execPrompt`, the underlying request is cancelled.
 
-Use this guide to add the package, create a client, call `setKey`/`setPrompt`/`exec`, and handle `PromptKeeperError` and stream consumption in agent or app code.
+Use this guide to add the package, create a client, call `setKey`/`setPrompt`/`exec`/`execPrompt`, and handle `PromptKeeperError` and stream consumption in agent or app code.
