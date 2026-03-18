@@ -1,0 +1,318 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A1001 /* PromptKeeperExampleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001; };
+		A1002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2002; };
+		A1003 /* Keys.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2003; };
+		A1004 /* StreamParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2004; };
+		A1005 /* ExecService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2005; };
+		A1006 /* TextExecView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2006; };
+		A1007 /* ImageExecView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2007; };
+		A1008 /* PromptKeeper in Frameworks */ = {isa = PBXBuildFile; productRef = A3001; };
+		A1009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2010; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A0001 /* PromptKeeperExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PromptKeeperExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2001 /* PromptKeeperExampleApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptKeeperExampleApp.swift; sourceTree = "<group>"; };
+		A2002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A2003 /* Keys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keys.swift; sourceTree = "<group>"; };
+		A2004 /* StreamParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamParser.swift; sourceTree = "<group>"; };
+		A2005 /* ExecService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecService.swift; sourceTree = "<group>"; };
+		A2006 /* TextExecView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextExecView.swift; sourceTree = "<group>"; };
+		A2007 /* ImageExecView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageExecView.swift; sourceTree = "<group>"; };
+		A2008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A2010 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B1001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1008 /* PromptKeeper in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		C0001 = {
+			isa = PBXGroup;
+			children = (
+				C0002 /* PromptKeeperExample */,
+				C0003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		C0002 /* PromptKeeperExample */ = {
+			isa = PBXGroup;
+			children = (
+				A2001 /* PromptKeeperExampleApp.swift */,
+				A2002 /* ContentView.swift */,
+				A2003 /* Keys.swift */,
+				A2008 /* Info.plist */,
+				A2010 /* Assets.xcassets */,
+				C0004 /* Services */,
+				C0005 /* Views */,
+			);
+			path = PromptKeeperExample;
+			sourceTree = "<group>";
+		};
+		C0003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A0001 /* PromptKeeperExample.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		C0004 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A2004 /* StreamParser.swift */,
+				A2005 /* ExecService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		C0005 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				A2006 /* TextExecView.swift */,
+				A2007 /* ImageExecView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		D1001 /* PromptKeeperExample */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E1002;
+			buildPhases = (
+				D1002 /* Sources */,
+				B1001 /* Frameworks */,
+				D1003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D1004 /* PBXTargetDependency */,
+			);
+			name = PromptKeeperExample;
+			productName = PromptKeeperExample;
+			productReference = A0001 /* PromptKeeperExample.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E1001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+			};
+			buildConfigurationList = E1003;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = C0001;
+			packageReferences = (
+				F1001 /* XCLocalSwiftPackageReference "PromptKeeper" */,
+			);
+			productRefGroup = C0003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				D1001 /* PromptKeeperExample */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		D1003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1009 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		D1002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1001 /* PromptKeeperExampleApp.swift in Sources */,
+				A1002 /* ContentView.swift in Sources */,
+				A1003 /* Keys.swift in Sources */,
+				A1004 /* StreamParser.swift in Sources */,
+				A1005 /* ExecService.swift in Sources */,
+				A1006 /* TextExecView.swift in Sources */,
+				A1007 /* ImageExecView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		D1004 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			productRef = A3001 /* PromptKeeper */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		E2001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		E2002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_OPTIMIZATION_LEVEL = s;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		E2004 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PromptKeeperExample/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ai.promptkeeper.example;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E2005 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PromptKeeperExample/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = ai.promptkeeper.example;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		E1002 /* Build configuration list for PBXNativeTarget "PromptKeeperExample" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E2004 /* Debug */,
+				E2005 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E1003 /* Build configuration list for PBXProject "PromptKeeperExample" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E2001 /* Debug */,
+				E2002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		F1001 /* XCLocalSwiftPackageReference "PromptKeeper" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../sdks/ios;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A3001 /* PromptKeeper */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PromptKeeper;
+			package = F1001 /* XCLocalSwiftPackageReference "PromptKeeper" */;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = E1001 /* Project object */;
+}
