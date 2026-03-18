@@ -155,9 +155,9 @@ viewModelScope.launch {
 
 ---
 
-## 6. Executing a function (`exec`, streaming)
+## 6. Executing a stored function (`exec`, streaming)
 
-Execute a function: the backend resolves the prompt, injects variables, calls the configured LLM, and streams the response as Server-Sent Events. Each emitted value is the raw SSE `data` payload (a string; often JSON).
+Execute a stored function: the backend resolves the prompt template by id, injects variables, calls the configured LLM, and streams the response as Server-Sent Events. Each emitted value is the raw SSE `data` payload (a string; often JSON).
 
 **Signature:**
 
@@ -174,7 +174,7 @@ fun exec(
 
 | Parameter    | Type                | Description                                              |
 |-------------|---------------------|----------------------------------------------------------|
-| `functionId`| String              | Function identifier (e.g. `"default"`, `"customer_support_reply"`). |
+| `functionId`| String              | Stored function identifier (e.g. `"default"`, `"customer_support_reply"`). |
 | `variables` | Map<String, String> | Optional template variables (Handlebars). Default: empty. |
 | `provider`  | String?             | Preferred provider (e.g. `"openai"`, `"anthropic"`).     |
 | `model`     | String?             | Model override.                                         |
@@ -209,7 +209,25 @@ viewModelScope.launch {
 
 ---
 
-## 7. Exceptions
+## 7. Executing a raw prompt (`execPrompt`, streaming)
+
+Run a **raw text prompt** without storing a function. The SDK calls the backend `POST /v1/execute-raw`; the prompt is sent directly to the provider and nothing is stored. Same SSE streaming semantics as `exec`.
+
+**Signature:**
+
+```kotlin
+fun execPrompt(
+    prompt: String,
+    variables: Map<String, String> = emptyMap(),
+    provider: String,
+    model: String? = null
+): Flow<String>
+```
+
+Calls backend POST /v1/execute-raw. Parameters: prompt, variables (optional), provider (required), model (optional).
+---
+
+## 8. Exceptions
 
 All exceptions extend `PromptKeeperException` (package `ai.promptkeeper.sdk`).
 
@@ -235,7 +253,7 @@ try {
 
 ---
 
-## 8. API summary (quick reference for agents)
+## 9. API summary (quick reference for agents)
 
 | Method / API | Description |
 |--------------|-------------|
@@ -244,7 +262,8 @@ try {
 | `PromptKeeper.getInstance()` | Returns instance set by `initialize`, or null. |
 | `setKey(rawSecret, provider)` | `suspend`. POST /v1/keys. Returns `PutKeyResponse`. |
 | `setPrompt(name, rawSecret, provider?, preferredModel?)` | `suspend`. POST /v1/prompts. Returns `PutPromptResponse`. |
-| `exec(functionId, variables?, provider?, model?)` | Returns `Flow<String>`. POST /v1/execute (SSE). |
+| `exec(functionId, variables?, provider?, model?)` | Returns `Flow<String>`. POST /v1/execute (SSE). Stored function. |
+| `execPrompt(prompt, variables?, provider?, model?)` | Returns `Flow<String>`. POST /v1/execute-raw (SSE). Raw prompt, no stored function. |
 
 **Imports:**
 
@@ -257,7 +276,7 @@ import ai.promptkeeper.sdk.model.PutPromptResponse
 
 ---
 
-## 9. Backend and registration
+## 10. Backend and registration
 
 - **Base URL:** https://api.promptkeeper.ai (hardcoded in SDK).
 - **Auth:** All requests use the API key as `Authorization: Bearer <key>` and `X-API-Key: <key>`.

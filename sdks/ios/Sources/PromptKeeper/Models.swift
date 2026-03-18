@@ -70,6 +70,14 @@ struct ExecuteRequest: Encodable {
     let model: String?
 }
 
+/// Request body for raw prompt execution (POST /v1/execute-raw).
+struct ExecutePromptRequest: Encodable {
+    let prompt: String
+    let variables: [String: String]
+    let provider: String?
+    let model: String?
+}
+
 /// One item from the exec SSE stream.
 public enum ExecStreamEvent: Sendable {
     /// A data chunk from the LLM stream (provider-specific payload).
