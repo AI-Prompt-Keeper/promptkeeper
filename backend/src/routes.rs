@@ -41,7 +41,8 @@ pub mod request {
         pub variables: HashMap<String, serde_json::Value>,
         /// Optional: prefer this provider (e.g. "openai", "anthropic", "gemini") for this request.
         pub provider: Option<String>,
-        /// Optional: model override. Takes precedence over prompt version default. If omitted everywhere, provider chooses.
+        /// Optional: model override. Takes precedence over prompt version default.
+        /// If omitted, Anthropic defaults to `claude-sonnet-4-6` (server-side default).
         pub model: Option<String>,
     }
 
@@ -53,7 +54,7 @@ pub mod request {
         pub prompt: String,
         /// Provider to use (e.g. "openai", "anthropic", "gemini"). Required. User must have a key for this provider (POST /v1/keys).
         pub provider: String,
-        /// Optional: model override. If omitted, provider default is used.
+        /// Optional: model override. If omitted, Anthropic defaults to `claude-sonnet-4-6` (server-side default).
         pub model: Option<String>,
         /// Optional: variable substitutions for Handlebars in prompt. Default: {}.
         #[serde(default)]

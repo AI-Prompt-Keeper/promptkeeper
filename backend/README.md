@@ -147,7 +147,7 @@ Sends a **raw prompt** directly to a provider. No `function_id`; the prompt is *
 |-----------|------|----------|-------------|
 | `prompt` | string | Yes | Raw prompt text. May include Handlebars placeholders (e.g. `{{name}}`) if `variables` is provided. |
 | `provider` | string | Yes | Provider to use (e.g. `"openai"`, `"anthropic"`, `"gemini"`). User must have a key for this provider (stored via POST /v1/keys). |
-| `model` | string | No | Model override (e.g. `"gpt-4o"`, `"claude-3-5-sonnet-20240620"`). If omitted, provider default is used. |
+| `model` | string | No | Model override (e.g. `"gpt-4o"`, `"claude-3-5-sonnet-20240620"`). If omitted, provider default is used (for Anthropic: `claude-sonnet-4-6`). |
 | `variables` | object | No | Map of variable names to JSON values. Injected into the prompt via Handlebars. Default: `{}`. |
 
 **Example request:**

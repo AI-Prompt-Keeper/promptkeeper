@@ -27,7 +27,7 @@ Runs the execute pipeline: resolves function config, renders the prompt with var
 | `function_id` | string | Yes | Identifier of the function (e.g. `customer_support_reply`). Used to look up prompt template and provider config. |
 | `variables` | object | No | Map of variable names to JSON values. Injected into the prompt template (Handlebars). Default: `{}`. |
 | `provider` | string | No | Preferred provider (e.g. `"openai"`, `"anthropic"`). If in the function's provider list, tried first. |
-| `model` | string | No | Model override. Takes precedence over prompt version default. If omitted everywhere, provider chooses. |
+| `model` | string | No | Model override. Takes precedence over prompt version default. If omitted everywhere, provider chooses (for Anthropic: `claude-sonnet-4-6`). |
 
 **Example request body:**
 
@@ -87,7 +87,7 @@ Sends a **raw prompt** directly to a provider. No `function_id`; the prompt is *
 |------|------|-----------|-------------|
 | `prompt` | string | Yes | Raw prompt text. May include Handlebars placeholders (e.g. `{{name}}`) if `variables` is provided. |
 | `provider` | string | Yes | Provider to use (e.g. `"openai"`, `"anthropic"`, `"gemini"`). User must have a key for this provider (POST /v1/keys). |
-| `model` | string | No | Model override. If omitted, provider default is used. |
+| `model` | string | No | Model override. If omitted, provider default is used (for Anthropic: `claude-sonnet-4-6`). |
 | `variables` | object | No | Map of variable names to JSON values. Injected into the prompt via Handlebars. Default: `{}`. |
 
 **Example request body:**
