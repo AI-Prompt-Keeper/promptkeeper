@@ -61,7 +61,13 @@ class PromptKeeper internal constructor(
      * @return Put key response with version_id, created_at, etc.
      */
     suspend fun setKey(rawSecret: String, provider: String): PutKeyResponse = withContext(Dispatchers.IO) {
-        val body = json.encodeToString(PutKeyRequest(rawSecret = rawSecret, provider = provider))
+        val body = json.encodeToString(
+            PutKeyRequest(
+                rawSecret = rawSecret,
+                provider = provider,
+                surface = SURFACE_ANDROID
+            )
+        )
         val request = Request.Builder()
             .url("$baseUrl/v1/keys")
             .post(body.toRequestBody(jsonMediaType))
@@ -89,7 +95,8 @@ class PromptKeeper internal constructor(
                 name = name,
                 rawSecret = rawSecret,
                 provider = provider,
-                preferredModel = preferredModel
+                preferredModel = preferredModel,
+                surface = SURFACE_ANDROID
             )
         )
         val request = Request.Builder()
@@ -132,7 +139,8 @@ class PromptKeeper internal constructor(
                 functionId = functionId,
                 variables = variablesJson,
                 provider = provider,
-                model = model
+                model = model,
+                surface = SURFACE_ANDROID
             )
         )
         val request = Request.Builder()
@@ -199,7 +207,8 @@ class PromptKeeper internal constructor(
                 prompt = prompt,
                 provider = provider,
                 model = model,
-                variables = variablesJson
+                variables = variablesJson,
+                surface = SURFACE_ANDROID
             )
         )
         val request = Request.Builder()
@@ -258,6 +267,7 @@ class PromptKeeper internal constructor(
 
     companion object {
         const val DEFAULT_BASE_URL = "https://api.promptkeeper.ai"
+        private const val SURFACE_ANDROID = "android"
 
         @Volatile
         private var defaultInstance: PromptKeeper? = null
