@@ -6,7 +6,8 @@ import kotlinx.serialization.Serializable
 @Serializable
 internal data class PutKeyRequest(
     @SerialName("raw_secret") val rawSecret: String,
-    val provider: String
+    val provider: String,
+    val surface: String
 )
 
 @Serializable
@@ -14,7 +15,8 @@ internal data class PutPromptRequest(
     val name: String,
     @SerialName("raw_secret") val rawSecret: String,
     val provider: String? = null,
-    @SerialName("preferred_model") val preferredModel: String? = null
+    @SerialName("preferred_model") val preferredModel: String? = null,
+    val surface: String
 )
 
 @Serializable
@@ -22,7 +24,8 @@ internal data class ExecuteRequest(
     @SerialName("function_id") val functionId: String,
     val variables: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
     val provider: String? = null,
-    val model: String? = null
+    val model: String? = null,
+    val surface: String
 )
 
 /** Request body for POST /v1/execute-raw. Backend requires prompt and provider. */
@@ -31,5 +34,6 @@ internal data class ExecuteRawRequest(
     val prompt: String,
     val provider: String,
     val model: String? = null,
-    val variables: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap()
+    val variables: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
+    val surface: String
 )
