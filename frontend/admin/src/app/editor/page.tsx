@@ -87,7 +87,6 @@ export default function EditorPage() {
             </div>
             <div className="w-72 shrink-0">
               <TestConsole
-                functionId={fnId}
                 systemPrompt={systemPrompt}
                 userPrompt={userPrompt}
               />

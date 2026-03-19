@@ -14,13 +14,11 @@ function extractVariables(text: string): string[] {
 interface TestConsoleProps {
   systemPrompt: string;
   userPrompt: string;
-  functionId: string;
 }
 
 export default function TestConsole({
   systemPrompt,
   userPrompt,
-  functionId,
 }: TestConsoleProps) {
   const variables = extractVariables(systemPrompt + "\n" + userPrompt);
   const [inputs, setInputs] = useState<Record<string, string>>(() => {
@@ -41,13 +39,35 @@ export default function TestConsole({
     setOutput("");
     setLoading(true);
     try {
+      const prompt = `${systemPrompt}\n\n${userPrompt}`.trim();
+      const provider = process.env.NEXT_PUBLIC_EXECUTE_PROVIDER || "openai";
+      const model = process.env.NEXT_PUBLIC_EXECUTE_MODEL || undefined;
+      const apiKey = process.env.NEXT_PUBLIC_EXECUTE_API_KEY || "";
+      const executeUrl =
+        process.env.NEXT_PUBLIC_EXECUTE_RAW_URL ||
+        "http://localhost:8080/v1/execute-raw";
+
+      if (!prompt) {
+        throw new Error("Prompt is empty. Add system/user prompt text first.");
+      }
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (apiKey) {
+        headers["Authorization"] = `Bearer ${apiKey}`;
+        headers["X-API-Key"] = apiKey;
+      }
+
       const res = await fetch(
-        process.env.NEXT_PUBLIC_EXECUTE_URL || "http://localhost:8080/v1/execute",
+        executeUrl,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers,
           body: JSON.stringify({
-            function_id: functionId,
+            prompt,
+            provider,
+            ...(model ? { model } : {}),
             variables: varsMap,
           }),
         }
@@ -73,7 +93,13 @@ export default function TestConsole({
           if (data === "[DONE]") continue;
           try {
             const j = JSON.parse(data);
-            if (j.text) out += j.text;
+            if (j.content) out += j.content;
+            // Backward-compatible extraction for provider-native chunks.
+            if (!j.content && Array.isArray(j.choices)) {
+              const c0 = j.choices[0];
+              if (c0?.delta?.content) out += c0.delta.content;
+              else if (c0?.message?.content) out += c0.message.content;
+            }
             if (j.error) out += `[Error: ${j.error}]`;
           } catch {
             // skip non-JSON lines
@@ -87,7 +113,7 @@ export default function TestConsole({
     } finally {
       setLoading(false);
     }
-  }, [functionId, varsMap]);
+  }, [systemPrompt, userPrompt, varsMap]);
 
   return (
     <div className="flex h-full flex-col rounded-lg border border-cream-dark bg-white">
