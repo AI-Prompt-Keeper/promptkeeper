@@ -47,7 +47,7 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.5.0")
 
     // PromptKeeper SDK from Maven Central
-    implementation("ai.promptkeeper:android-sdk:latest.release")
+    implementation("ai.promptkeeper:android-sdk:1.0.2")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
