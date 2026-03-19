@@ -244,7 +244,7 @@ class PromptKeeper internal constructor(
                         if (err != null) throw PromptKeeperException.Server(err)
                         emit(data)
                     }
-                }
+                } 
             }
         }
     }.flowOn(Dispatchers.IO)
