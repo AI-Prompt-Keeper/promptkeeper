@@ -249,9 +249,7 @@ func apiError(status string, msg string) error {
 	return fmt.Errorf("%s: %s", status, msg)
 }
 
-// Execute runs the execute endpoint with streaming. POST /v1/execute
-// StreamWriter is called for each SSE data chunk. For streaming, extract content from provider chunks.
-// If debugLog is non-nil, every step is logged to it (e.g. os.Stderr for --debug).
+// Execute runs the stored-prompt execute endpoint with streaming. POST /v1/execute.
 func (c *Client) Execute(functionID string, variables map[string]interface{}, provider, model string, streamWriter func(data string) error, debugLog io.Writer) error {
 	body := map[string]interface{}{
 		"function_id": functionID,
@@ -263,8 +261,27 @@ func (c *Client) Execute(functionID string, variables map[string]interface{}, pr
 	if model != "" {
 		body["model"] = model
 	}
+	return c.executeStream("/v1/execute", body, streamWriter, debugLog)
+}
+
+// ExecuteRaw runs inline/raw prompt execution with streaming. POST /v1/execute-raw.
+func (c *Client) ExecuteRaw(prompt string, variables map[string]interface{}, provider, model string, streamWriter func(data string) error, debugLog io.Writer) error {
+	body := map[string]interface{}{
+		"prompt":    prompt,
+		"provider":  provider,
+		"variables": variables,
+	}
+	if model != "" {
+		body["model"] = model
+	}
+	return c.executeStream("/v1/execute-raw", body, streamWriter, debugLog)
+}
+
+// executeStream calls an SSE execute endpoint and parses streaming chunks.
+func (c *Client) executeStream(path string, body map[string]interface{}, streamWriter func(data string) error, debugLog io.Writer) error {
 	jsonBody, _ := json.Marshal(body)
-	req, err := http.NewRequest("POST", c.BaseURL+"/v1/execute", bytes.NewReader(jsonBody))
+	url := c.BaseURL + path
+	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return err
 	}
@@ -274,7 +291,7 @@ func (c *Client) Execute(functionID string, variables map[string]interface{}, pr
 	req.Header.Set("Accept", "text/event-stream")
 
 	if debugLog != nil {
-		fmt.Fprintf(debugLog, "[debug] POST %s/v1/execute\n", c.BaseURL)
+		fmt.Fprintf(debugLog, "[debug] POST %s\n", url)
 		fmt.Fprintf(debugLog, "[debug] body: %s\n", string(jsonBody))
 		fmt.Fprintf(debugLog, "[debug] auth: Bearer %s...\n", maskToken(c.APIKey))
 	}
