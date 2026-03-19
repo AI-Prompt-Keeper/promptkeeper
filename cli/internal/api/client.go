@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const surfaceCLI = "cli"
+
 // Client for Prompt Keeper backend API.
 type Client struct {
 	BaseURL    string
@@ -92,6 +94,7 @@ func (c *Client) Register(email, password, name string) (map[string]interface{},
 	body := map[string]interface{}{
 		"email":    email,
 		"password": password,
+		"surface":  surfaceCLI,
 	}
 	if name != "" {
 		body["name"] = name
@@ -111,7 +114,7 @@ func (c *Client) Register(email, password, name string) (map[string]interface{},
 
 	if c.DebugLog != nil {
 		fmt.Fprintf(c.DebugLog, "[debug] POST %s\n", url)
-		logBody := map[string]interface{}{"email": email, "password": "[REDACTED]"}
+		logBody := map[string]interface{}{"email": email, "password": "[REDACTED]", "surface": surfaceCLI}
 		if name != "" {
 			logBody["name"] = name
 		}
@@ -150,8 +153,13 @@ func (c *Client) PutKey(provider, rawSecret string) error {
 	body := map[string]string{
 		"raw_secret": rawSecret,
 		"provider":   provider,
+		"surface":    surfaceCLI,
 	}
-	return c.putJSON("/v1/keys", body, map[string]string{"raw_secret": "[REDACTED]"})
+	return c.putJSON("/v1/keys", body, map[string]string{
+		"provider":   provider,
+		"raw_secret": "[REDACTED]",
+		"surface":    surfaceCLI,
+	})
 }
 
 // PutPrompt stores a prompt template. POST /v1/prompts
@@ -159,6 +167,7 @@ func (c *Client) PutPrompt(name, rawSecret, provider, model string) error {
 	body := map[string]interface{}{
 		"name":       name,
 		"raw_secret": rawSecret,
+		"surface":    surfaceCLI,
 	}
 	if provider != "" {
 		body["provider"] = provider
@@ -254,6 +263,7 @@ func (c *Client) Execute(functionID string, variables map[string]interface{}, pr
 	body := map[string]interface{}{
 		"function_id": functionID,
 		"variables":   variables,
+		"surface":     surfaceCLI,
 	}
 	if provider != "" {
 		body["provider"] = provider
@@ -270,6 +280,7 @@ func (c *Client) ExecuteRaw(prompt string, variables map[string]interface{}, pro
 		"prompt":    prompt,
 		"provider":  provider,
 		"variables": variables,
+		"surface":   surfaceCLI,
 	}
 	if model != "" {
 		body["model"] = model
