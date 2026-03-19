@@ -12,6 +12,7 @@ import Foundation
 struct PutKeyRequest: Encodable {
     let raw_secret: String
     let provider: String
+    let surface: String?
 }
 
 /// Response from setKey (store provider API key).
@@ -40,6 +41,7 @@ struct PutPromptRequest: Encodable {
     let raw_secret: String
     let provider: String?
     let preferred_model: String?
+    let surface: String?
 }
 
 /// Response from setPrompt (store prompt template).
@@ -68,6 +70,7 @@ struct ExecuteRequest: Encodable {
     let variables: [String: String]
     let provider: String?
     let model: String?
+    let surface: String?
 }
 
 /// Request body for raw prompt execution (POST /v1/execute-raw).
@@ -76,6 +79,7 @@ struct ExecutePromptRequest: Encodable {
     let variables: [String: String]
     let provider: String?
     let model: String?
+    let surface: String?
 }
 
 /// One item from the exec SSE stream.
