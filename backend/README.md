@@ -73,6 +73,7 @@ See [docs/TEST-SCENARIOS.md](docs/TEST-SCENARIOS.md) for a concise list of teste
 Base URL: `http://localhost:3000` (or configured host/port).
 
 All JSON endpoints use `Content-Type: application/json` unless noted. Error responses are JSON: `{ "error": "<message>" }`.
+All JSON API methods accept optional `surface` (string). If omitted, backend uses `surface = "unknown"` for analytics.
 
 ### Health
 
@@ -103,6 +104,8 @@ Runs the execute pipeline: resolves function config, renders the prompt with var
 | `function_id` | string | Yes | Function identifier (e.g. `default`, `customer_support_reply`). Used to look up prompt template and provider config. |
 | `variables` | object | No | Map of variable names to JSON values. Injected into the Handlebars prompt template. Default: `{}`. |
 | `provider` | string | No | Preferred provider (e.g. `"openai"`, `"anthropic"`, `"gemini"`). If in the function's provider list, tried first. |
+| `model` | string | No | Model override. If omitted, configured/provider defaults apply (Anthropic defaults to `claude-sonnet-4-6`). |
+| `surface` | string | No | Client-facing interface tag (e.g. `"cli"`, `"android"`, `"web"`). Default: `"unknown"`. |
 
 **Auth:** Requires `Authorization: Bearer <api_token>` or `X-API-Key: <api_token>`. Use the API key returned at registration (e.g. `pk_...`) or a session token from login.
 
@@ -149,6 +152,7 @@ Sends a **raw prompt** directly to a provider. No `function_id`; the prompt is *
 | `provider` | string | Yes | Provider to use (e.g. `"openai"`, `"anthropic"`, `"gemini"`). User must have a key for this provider (stored via POST /v1/keys). |
 | `model` | string | No | Model override (e.g. `"gpt-4o"`, `"claude-3-5-sonnet-20240620"`). If omitted, provider default is used (for Anthropic: `claude-sonnet-4-6`). |
 | `variables` | object | No | Map of variable names to JSON values. Injected into the prompt via Handlebars. Default: `{}`. |
+| `surface` | string | No | Client-facing interface tag (e.g. `"cli"`, `"android"`, `"web"`). Default: `"unknown"`. |
 
 **Example request:**
 ```json
@@ -185,6 +189,7 @@ Stores a provider API key (e.g. OpenAI, Anthropic, Google Gemini). Uses envelope
 |-----------|------|----------|-------------|
 | `raw_secret` | string | Yes | Raw API key. Never logged; zeroized after use. |
 | `provider` | string | Yes | Provider name (e.g. `"openai"`, `"anthropic"`, `"gemini"`). |
+| `surface` | string | No | Client-facing interface tag (e.g. `"cli"`, `"android"`, `"web"`). Default: `"unknown"`. |
 
 **Example:**
 ```json
@@ -218,6 +223,7 @@ Stores a prompt template for a named function. Uses envelope encryption. Raw sec
 | `name` | string | Yes | Function/prompt name (e.g. `"customer_support"`). |
 | `raw_secret` | string | Yes | Raw prompt template (e.g. Handlebars). Never logged. |
 | `provider` | string | No | Optional default provider (e.g. `"openai"`, `"gemini"`) when creating a new function. |
+| `surface` | string | No | Client-facing interface tag (e.g. `"cli"`, `"android"`, `"web"`). Default: `"unknown"`. |
 
 **Example:**
 ```json
@@ -262,6 +268,7 @@ Creates a new user with email and password. Also creates a default workspace, ad
 | `email` | string | Yes | User email (must contain `@`). Normalized to lowercase. |
 | `password` | string | Yes | Password; must be ≥ 12 characters. Stored as Argon2id hash only. |
 | `name` | string | No | Display name. |
+| `surface` | string | No | Client-facing interface tag (e.g. `"cli"`, `"android"`, `"web"`). Default: `"unknown"`. |
 
 **Example request:**
 ```json
@@ -310,6 +317,7 @@ Verifies email and password, creates a session, and returns a session token. Use
 |-----------|------|----------|-------------|
 | `email` | string | Yes | User email. |
 | `password` | string | Yes | User password. |
+| `surface` | string | No | Client-facing interface tag (e.g. `"cli"`, `"android"`, `"web"`). Default: `"unknown"`. |
 
 **Example request:**
 ```json
