@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
+fn default_surface() -> String {
+    "unknown".to_string()
+}
+
 /// Request body for POST /v1/keys. Stores provider API key (openai, anthropic, gemini, etc.).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -20,6 +24,9 @@ pub struct PutKeyRequestBody {
     pub raw_secret: Zeroizing<String>,
     /// Provider (e.g. "openai", "anthropic"). Required.
     pub provider: String,
+    /// Optional client-facing interface tag, e.g. "cli", "android", "web". Defaults to "unknown".
+    #[serde(default = "default_surface")]
+    pub surface: String,
 }
 
 /// Request body for POST /v1/prompts. Stores prompt template for a named function.
@@ -35,6 +42,9 @@ pub struct PutPromptRequestBody {
     pub provider: Option<String>,
     /// Optional: preferred model for this version (e.g. "gpt-4o", "claude-3-5-sonnet-20240620").
     pub preferred_model: Option<String>,
+    /// Optional client-facing interface tag, e.g. "cli", "android", "web". Defaults to "unknown".
+    #[serde(default = "default_surface")]
+    pub surface: String,
 }
 
 fn deserialize_secret<'de, D>(d: D) -> Result<Zeroizing<String>, D::Error>
