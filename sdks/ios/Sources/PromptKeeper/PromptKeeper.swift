@@ -39,14 +39,21 @@ public final class PromptKeeper {
     /// - Parameters:
     ///   - rawSecret: Raw API key (e.g. `sk-...`). Not persisted by the SDK; sent only to the server.
     ///   - provider: Provider name (e.g. `"openai"`, `"anthropic"`).
+    ///   - surface: Optional client surface tag for backend analytics. Default: `"ios"`.
     /// - Returns: Put key response with `version_id`, `created_at`, etc.
-    public func setKey(rawSecret: String, provider: String) async throws -> PutKeyResponse {
+    public func setKey(
+        rawSecret: String,
+        provider: String,
+        surface: String? = "ios"
+    ) async throws -> PutKeyResponse {
         let endpoint = baseURL.appendingPathComponent("v1/keys")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setAuth(apiKeyHolder.apiKey)
-        request.httpBody = try JSONEncoder().encode(PutKeyRequest(raw_secret: rawSecret, provider: provider))
+        request.httpBody = try JSONEncoder().encode(
+            PutKeyRequest(raw_secret: rawSecret, provider: provider, surface: surface)
+        )
 
         let (data, response) = try await session.data(for: request)
         try Self.validateHTTP(response: response, data: data, expectedStatus: 201)
@@ -61,12 +68,14 @@ public final class PromptKeeper {
     ///   - rawSecret: Raw prompt template (e.g. Handlebars). Not persisted by the SDK.
     ///   - provider: Optional default provider (e.g. `"openai"`).
     ///   - preferredModel: Optional default model (e.g. `"gpt-4o"`, `"claude-3-5-sonnet-20240620"`).
+    ///   - surface: Optional client surface tag for backend analytics. Default: `"ios"`.
     /// - Returns: Put prompt response with `version_id`, `created_at`, etc.
     public func setPrompt(
         name: String,
         rawSecret: String,
         provider: String? = nil,
-        preferredModel: String? = nil
+        preferredModel: String? = nil,
+        surface: String? = "ios"
     ) async throws -> PutPromptResponse {
         let endpoint = baseURL.appendingPathComponent("v1/prompts")
         var request = URLRequest(url: endpoint)
@@ -77,7 +86,8 @@ public final class PromptKeeper {
             name: name,
             raw_secret: rawSecret,
             provider: provider,
-            preferred_model: preferredModel
+            preferred_model: preferredModel,
+            surface: surface
         )
         request.httpBody = try JSONEncoder().encode(body)
 
@@ -94,12 +104,14 @@ public final class PromptKeeper {
     ///   - variables: Optional map of variable names to values (Handlebars). Default: empty.
     ///   - provider: Optional preferred provider (e.g. `"openai"`, `"anthropic"`).
     ///   - model: Optional model override.
+    ///   - surface: Optional client surface tag for backend analytics. Default: `"ios"`.
     /// - Returns: An async sequence of SSE events. Each event's `data` contains provider payload (e.g. stream chunk). On error, a single event may contain JSON `{ "error": "..." }`.
     public func exec(
         functionId: String,
         variables: [String: String]? = nil,
         provider: String? = nil,
-        model: String? = nil
+        model: String? = nil,
+        surface: String? = "ios"
     ) -> AsyncThrowingStream<ExecStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             var task: Task<Void, Never>? = Task {
@@ -113,7 +125,8 @@ public final class PromptKeeper {
                         function_id: functionId,
                         variables: variables ?? [:],
                         provider: provider,
-                        model: model
+                        model: model,
+                        surface: surface
                     )
                     request.httpBody = try JSONEncoder().encode(body)
 
@@ -156,12 +169,14 @@ public final class PromptKeeper {
     ///   - variables: Optional map of variable names to values (Handlebars). Default: empty.
     ///   - provider: Optional preferred provider (e.g. `"openai"`, `"anthropic"`, `"gemini"`).
     ///   - model: Optional model override.
+    ///   - surface: Optional client surface tag for backend analytics. Default: `"ios"`.
     /// - Returns: An async sequence of SSE events. Same semantics as `exec(functionId:...)`; each event's `data` contains provider payload. On error, a single event may contain JSON `{ "error": "..." }`.
     public func execPrompt(
         prompt: String,
         variables: [String: String]? = nil,
         provider: String? = nil,
-        model: String? = nil
+        model: String? = nil,
+        surface: String? = "ios"
     ) -> AsyncThrowingStream<ExecStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             var task: Task<Void, Never>? = Task {
@@ -175,7 +190,8 @@ public final class PromptKeeper {
                         prompt: prompt,
                         variables: variables ?? [:],
                         provider: provider,
-                        model: model
+                        model: model,
+                        surface: surface
                     )
                     request.httpBody = try JSONEncoder().encode(body)
 
