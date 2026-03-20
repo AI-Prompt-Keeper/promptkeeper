@@ -301,9 +301,10 @@ async fn register_handler(
     headers: HeaderMap,
     Json(body): Json<RegisterRequest>,
 ) -> Result<(StatusCode, Json<RegisterResponse>), (StatusCode, Json<serde_json::Value>)> {
-    let _surface = body.surface.as_str();
+    let surface = body.surface.clone();
     if let Some(client_ip) = client_ip_from_headers(&headers) {
         if !state.register_rate_limiter.check_and_record(&client_ip) {
+            state.analytics.track_register_failed(&surface, "rate_limited");
             return Err((
                 StatusCode::TOO_MANY_REQUESTS,
                 Json(serde_json::json!({
@@ -329,6 +330,7 @@ async fn register_handler(
     let (pow_nonce, pow_solution, pow_valid_until) = match (pow_nonce, pow_solution, pow_valid_until) {
         (Some(n), Some(s), Some(v)) if !n.is_empty() && !s.is_empty() && !v.is_empty() => (n, s, v),
         _ => {
+            state.analytics.track_register_failed(&surface, "pow_headers_missing");
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
@@ -340,6 +342,7 @@ async fn register_handler(
     let valid_until_dt = match chrono::DateTime::parse_from_rfc3339(pow_valid_until) {
         Ok(dt) => dt.with_timezone(&Utc),
         Err(_) => {
+            state.analytics.track_register_failed(&surface, "pow_valid_until_invalid");
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
@@ -349,6 +352,7 @@ async fn register_handler(
         }
     };
     if Utc::now() > valid_until_dt {
+        state.analytics.track_register_failed(&surface, "pow_expired");
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
@@ -357,6 +361,7 @@ async fn register_handler(
         ));
     }
     if let Err(e) = verify_register_pow(pow_nonce, pow_valid_until, pow_solution, REGISTER_POW_DIFFICULTY) {
+        state.analytics.track_register_failed(&surface, "pow_invalid");
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
@@ -368,9 +373,11 @@ async fn register_handler(
     // Basic validation – keep raw password in memory as short as possible.
     let email = body.email.trim().to_lowercase();
     if !email.contains('@') {
+        state.analytics.track_register_failed(&surface, "invalid_email");
         return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "invalid email" }))));
     }
     if body.password.len() < 12 {
+        state.analytics.track_register_failed(&surface, "password_too_short");
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "password must be at least 12 characters" })),
@@ -380,6 +387,7 @@ async fn register_handler(
     // Hash password with Argon2id (see auth::crypto). No logging of raw password.
     let password = body.password;
     let hashed = hash_password(&password).map_err(|_| {
+        state.analytics.track_register_failed(&surface, "hashing_failed");
         (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "hashing failed" })))
     })?;
 
@@ -391,6 +399,7 @@ async fn register_handler(
     // Run all inserts in a transaction.
     let mut tx = state.db.begin().await.map_err(|e| {
         tracing::error!(error = ?e, "failed to begin transaction");
+        state.analytics.track_register_failed(&surface, "transaction_begin_failed");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": "failed to create user" })),
@@ -411,6 +420,7 @@ async fn register_handler(
     .map_err(|e| {
         if let Some(db_err) = e.as_database_error() {
             if db_err.code().map(|c| c == "23505").unwrap_or(false) {
+                state.analytics.track_register_failed(&surface, "email_already_registered");
                 return (
                     StatusCode::CONFLICT,
                     Json(serde_json::json!({ "error": "email already registered" })),
@@ -418,6 +428,7 @@ async fn register_handler(
             }
         }
         tracing::error!(error = ?e, "failed to insert user");
+        state.analytics.track_register_failed(&surface, "insert_user_failed");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": "failed to create user" })),
@@ -440,6 +451,7 @@ async fn register_handler(
     .await
     .map_err(|e| {
         tracing::error!(error = ?e, "failed to create workspace");
+        state.analytics.track_register_failed(&surface, "create_workspace_failed");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": "failed to create user" })),
@@ -458,6 +470,7 @@ async fn register_handler(
     .await
     .map_err(|e| {
         tracing::error!(error = ?e, "failed to add workspace member");
+        state.analytics.track_register_failed(&surface, "add_workspace_member_failed");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": "failed to create user" })),
@@ -486,6 +499,7 @@ async fn register_handler(
     .await
     .map_err(|e| {
         tracing::error!(error = ?e, "failed to create API token");
+        state.analytics.track_register_failed(&surface, "create_api_token_failed");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": "failed to create user" })),
@@ -494,11 +508,14 @@ async fn register_handler(
 
     tx.commit().await.map_err(|e| {
         tracing::error!(error = ?e, "failed to commit registration");
+        state.analytics.track_register_failed(&surface, "commit_failed");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": "failed to create user" })),
         )
     })?;
+
+    state.analytics.track_user_registered(&surface, id, workspace_id);
 
     Ok((
         StatusCode::CREATED,
@@ -544,9 +561,10 @@ async fn login_handler(
     State(state): State<AppState>,
     Json(body): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, (StatusCode, Json<serde_json::Value>)> {
-    let _surface = body.surface.as_str();
+    let surface = body.surface.clone();
     let email = body.email.trim().to_lowercase();
     if !email.contains('@') {
+        state.analytics.track_login_failed(&surface, "invalid_credentials");
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "error": "invalid email or password" })),
@@ -562,6 +580,7 @@ async fn login_handler(
     .await
     .map_err(|e| {
         tracing::error!(error = ?e, "login db error");
+        state.analytics.track_login_failed(&surface, "db_error");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": "login failed" })),
@@ -571,6 +590,7 @@ async fn login_handler(
     let row = match row {
         Some(r) => r,
         None => {
+            state.analytics.track_login_failed(&surface, "invalid_credentials");
             return Err((
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({ "error": "invalid email or password" })),
@@ -589,6 +609,7 @@ async fn login_handler(
     drop(password);
 
     if !ok {
+        state.analytics.track_login_failed(&surface, "invalid_credentials");
         return Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "error": "invalid email or password" })),
@@ -617,11 +638,14 @@ async fn login_handler(
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, "failed to create session");
+            state.analytics.track_login_failed(&surface, "db_error");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": "login failed" })),
             )
         })?;
+
+    state.analytics.track_user_logged_in(&surface, user_id);
 
     Ok(Json(LoginResponse {
         token,
@@ -651,6 +675,7 @@ async fn execute_handler(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(err = %e, "execute request body parse failed");
+            analytics.track_execute_request_parse_error(auth.user_id, auth.workspace_id);
             let event = Event::default()
                 .json_data(serde_json::json!({ "error": e.to_string() }))
                 .unwrap();
@@ -769,6 +794,7 @@ async fn execute_raw_handler(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(err = %e, "execute-raw request body parse failed");
+            analytics.track_execute_raw_request_parse_error(auth.user_id, auth.workspace_id);
             let event = Event::default()
                 .json_data(serde_json::json!({ "error": e.to_string() }))
                 .unwrap();
@@ -898,7 +924,14 @@ async fn put_key_handler(
     auth: Auth,
     Json(body): Json<PutKeyRequestBody>,
 ) -> Result<impl axum::response::IntoResponse, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    let surface = body.surface.clone();
     let service = state.put_service.as_ref().ok_or_else(|| {
+        state.analytics.track_put_endpoint_unavailable(
+            "/v1/keys",
+            &surface,
+            auth.user_id,
+            auth.workspace_id,
+        );
         (
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({ "error": "secrets not configured (KMS_KEY_ID required)" })),
@@ -907,6 +940,8 @@ async fn put_key_handler(
 
     let context_id = auth.workspace_id.to_string();
     let fingerprint = secret_fingerprint(body.raw_secret.as_str());
+    let provider_for_analytics = body.provider.trim().to_string();
+
     let result = service
         .store_key(
             &body.provider,
@@ -915,8 +950,29 @@ async fn put_key_handler(
             auth.user_id,
             auth.workspace_id,
         )
-        .await
-        .map_err(map_put_error)?;
+        .await;
+
+    let result = match result {
+        Ok(r) => r,
+        Err(e) => {
+            if e.is_provider_not_supported_for_key() {
+                state.analytics.track_key_store_provider_not_supported(
+                    &surface,
+                    auth.user_id,
+                    auth.workspace_id,
+                    &provider_for_analytics,
+                );
+            }
+            return Err(map_put_error(e));
+        }
+    };
+
+    state.analytics.track_key_stored(
+        &surface,
+        auth.user_id,
+        auth.workspace_id,
+        &provider_for_analytics,
+    );
 
     let response = PutStorageResponse {
         version_id: result.version_id,
@@ -939,7 +995,14 @@ async fn put_prompt_handler(
     auth: Auth,
     Json(body): Json<PutPromptRequestBody>,
 ) -> Result<impl axum::response::IntoResponse, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    let surface = body.surface.clone();
     let service = state.put_service.as_ref().ok_or_else(|| {
+        state.analytics.track_put_endpoint_unavailable(
+            "/v1/prompts",
+            &surface,
+            auth.user_id,
+            auth.workspace_id,
+        );
         (
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({ "error": "secrets not configured (KMS_KEY_ID required)" })),
@@ -948,6 +1011,14 @@ async fn put_prompt_handler(
 
     let context_id = auth.workspace_id.to_string();
     let fingerprint = secret_fingerprint(body.raw_secret.as_str());
+    let provider_label = body
+        .provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown")
+        .to_string();
+
     let result = service
         .store_prompt(
             &body.name,
@@ -958,6 +1029,13 @@ async fn put_prompt_handler(
         )
         .await
         .map_err(map_put_error)?;
+
+    state.analytics.track_prompt_stored(
+        &surface,
+        auth.user_id,
+        auth.workspace_id,
+        &provider_label,
+    );
 
     let response = PutStorageResponse {
         version_id: result.version_id,

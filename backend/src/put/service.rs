@@ -21,6 +21,13 @@ pub enum PutServiceError {
     Db(String),
 }
 
+impl PutServiceError {
+    /// `store_key` rejected the provider because it is not in the supported catalog.
+    pub fn is_provider_not_supported_for_key(&self) -> bool {
+        matches!(self, PutServiceError::Validation(s) if s.contains("is not supported"))
+    }
+}
+
 /// Processes PUT logic: encrypt with envelope, persist to DB, return metadata.
 /// Caller (handler) is responsible for validation; this layer does encrypt + store.
 pub struct PutFunctionService {
