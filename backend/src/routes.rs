@@ -2,8 +2,9 @@
 
 use axum::{
     body::Bytes,
-    extract::{FromRef, State},
+    extract::{Extension, FromRef, State},
     http::{HeaderMap, StatusCode},
+    middleware,
     response::sse::{Event, Sse},
     routing::{get, post},
     Json, Router,
@@ -24,7 +25,12 @@ use crate::auth::crypto::{hash_password, verify_password};
 use crate::analytics::AnalyticsReporter;
 use crate::db::DbFunctionStore;
 use crate::execute::{ExecuteState};
+use crate::observability::{
+    self, observability_middleware, HealthJson, ReadinessState,
+};
+use crate::observability::request_id::ObservabilityShared;
 use crate::put::{PutFunctionService, PutKeyRequestBody, PutPromptRequestBody, PutStorageResponse, secret_fingerprint};
+use metrics_exporter_prometheus::PrometheusHandle;
 use crate::routes::request::ExecuteRequest;
 use crate::secrets::{EnvelopeError, SecretEnveloper};
 use sha2::{Digest, Sha256};
@@ -202,6 +208,10 @@ pub struct AppState {
     pub register_rate_limiter: Arc<RegisterRateLimiter>,
     /// Async analytics reporter (PostHog) with a dedicated worker thread.
     pub analytics: AnalyticsReporter,
+    /// Prometheus scrape handle (`GET /metrics`).
+    pub prometheus_handle: PrometheusHandle,
+    /// Startup readiness (DB function catalog loaded).
+    pub readiness: Arc<ReadinessState>,
 }
 
 impl FromRef<AppState> for sqlx::PgPool {
@@ -210,18 +220,6 @@ impl FromRef<AppState> for sqlx::PgPool {
     }
 }
 
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            execute: ExecuteState::default(),
-            secrets: None,
-            put_service: None,
-            db: sqlx::PgPool::connect_lazy("postgres://localhost/promptkeeper").expect("lazy pg pool"),
-            register_rate_limiter: Arc::new(RegisterRateLimiter::default()),
-            analytics: AnalyticsReporter::from_env(),
-        }
-    }
-}
 
 /// GET /health — for Docker and load balancer healthchecks.
 async fn health_handler() -> (StatusCode, &'static str) {
@@ -229,10 +227,15 @@ async fn health_handler() -> (StatusCode, &'static str) {
 }
 
 /// Build the app router with shared state. Pass `secrets` when KMS is configured.
-pub async fn app_router(secrets: Option<Arc<SecretEnveloper>>, db: sqlx::PgPool) -> Result<Router<()>, crate::db::LoadError> {
+pub async fn app_router(
+    secrets: Option<Arc<SecretEnveloper>>,
+    db: sqlx::PgPool,
+    prometheus_handle: PrometheusHandle,
+) -> Result<Router<()>, crate::db::LoadError> {
     let function_store = Arc::new(DbFunctionStore::new(db.clone(), secrets.clone()));
-    if let Err(e) = function_store.load_from_db().await {
-        tracing::warn!(err = %e, "load_from_db failed (schema 001 may not be applied); using empty function store");
+    let config_loaded = function_store.load_from_db().await.is_ok();
+    if !config_loaded {
+        tracing::warn!("load_from_db failed (schema 001 may not be applied); using empty function store");
     }
     function_store.seed_default_if_empty();
 
@@ -251,8 +254,12 @@ pub async fn app_router(secrets: Option<Arc<SecretEnveloper>>, db: sqlx::PgPool)
 
     let register_rate_limiter = Arc::new(RegisterRateLimiter::default());
     let analytics = AnalyticsReporter::from_env();
+    let readiness = Arc::new(ReadinessState { config_loaded });
     Ok(Router::new()
         .route("/health", get(health_handler))
+        .route("/health/live", get(health_live_route))
+        .route("/health/ready", get(health_ready_route))
+        .route("/metrics", get(metrics_route))
         .route("/v1/execute", post(execute_handler))
         .route("/v1/execute-raw", post(execute_raw_handler))
         .route("/v1/auth/register-challenge", get(register_challenge_handler))
@@ -260,6 +267,7 @@ pub async fn app_router(secrets: Option<Arc<SecretEnveloper>>, db: sqlx::PgPool)
         .route("/v1/auth/login", post(login_handler))
         .route("/v1/keys", post(put_key_handler))
         .route("/v1/prompts", post(put_prompt_handler))
+        .layer(middleware::from_fn(observability_middleware))
         .with_state(AppState {
             execute,
             secrets,
@@ -267,7 +275,41 @@ pub async fn app_router(secrets: Option<Arc<SecretEnveloper>>, db: sqlx::PgPool)
             db,
             register_rate_limiter,
             analytics,
+            prometheus_handle,
+            readiness,
         }))
+}
+
+/// GET /metrics — Prometheus text exposition.
+async fn metrics_route(State(state): State<AppState>) -> (StatusCode, [(axum::http::HeaderName, &'static str); 1], String) {
+    (
+        StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        state.prometheus_handle.render(),
+    )
+}
+
+/// GET /health/live — liveness.
+async fn health_live_route() -> (StatusCode, Json<HealthJson>) {
+    (
+        StatusCode::OK,
+        Json(HealthJson { status: "ok" }),
+    )
+}
+
+/// GET /health/ready — DB + catalog load OK.
+async fn health_ready_route(State(state): State<AppState>) -> (StatusCode, Json<HealthJson>) {
+    if observability::health::is_ready(&state.db, &state.readiness).await {
+        (
+            StatusCode::OK,
+            Json(HealthJson { status: "ok" }),
+        )
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(HealthJson { status: "not_ready" }),
+        )
+    }
 }
 
 /// Request body for user registration.
@@ -663,6 +705,7 @@ async fn login_handler(
 async fn execute_handler(
     State(state): State<AppState>,
     auth: Auth,
+    Extension(obs): Extension<ObservabilityShared>,
     body: Bytes,
 ) -> Sse<impl Stream<Item = Result<Event, axum::Error>> + Send + 'static> {
     let execute_state = state.execute;
@@ -675,6 +718,10 @@ async fn execute_handler(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(err = %e, "execute request body parse failed");
+            crate::observability::metrics::apply_execute_failure(
+                &obs,
+                &crate::execute::ExecuteError::Other(format!("json: {e}")),
+            );
             analytics.track_execute_request_parse_error(auth.user_id, auth.workspace_id);
             let event = Event::default()
                 .json_data(serde_json::json!({ "error": e.to_string() }))
@@ -686,6 +733,12 @@ async fn execute_handler(
 
     let function_id = req.function_id.clone();
     let surface = req.surface.clone();
+    crate::observability::metrics::set_proxy_fields(
+        &obs,
+        &function_id,
+        req.provider.clone(),
+        req.model.clone(),
+    );
     let span = tracing::info_span!("execute", function_id = %function_id);
 
     let context_id = auth.workspace_id.to_string();
@@ -728,6 +781,7 @@ async fn execute_handler(
             }
             Ok(Err(e)) => {
                 tracing::warn!(err = %e, "execute failed");
+                crate::observability::metrics::apply_execute_failure(&obs, &e);
                 let latency_ms = start.elapsed().as_millis();
                 analytics.track_proxy_error(
                     "/v1/execute",
@@ -749,6 +803,12 @@ async fn execute_handler(
             }
             Err(_) => {
                 tracing::warn!("execute exceeded 60s timeout");
+                crate::observability::metrics::apply_execute_failure(
+                    &obs,
+                    &crate::execute::ExecuteError::Other(
+                        "execute exceeded 60s client timeout".into(),
+                    ),
+                );
                 let latency_ms = start.elapsed().as_millis();
                 analytics.track_proxy_error(
                     "/v1/execute",
@@ -782,6 +842,7 @@ async fn execute_handler(
 async fn execute_raw_handler(
     State(state): State<AppState>,
     auth: Auth,
+    Extension(obs): Extension<ObservabilityShared>,
     body: Bytes,
 ) -> Sse<impl Stream<Item = Result<Event, axum::Error>> + Send + 'static> {
     let execute_state = state.execute;
@@ -794,6 +855,10 @@ async fn execute_raw_handler(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(err = %e, "execute-raw request body parse failed");
+            crate::observability::metrics::apply_execute_failure(
+                &obs,
+                &crate::execute::ExecuteError::Other(format!("json: {e}")),
+            );
             analytics.track_execute_raw_request_parse_error(auth.user_id, auth.workspace_id);
             let event = Event::default()
                 .json_data(serde_json::json!({ "error": e.to_string() }))
@@ -805,6 +870,12 @@ async fn execute_raw_handler(
 
     let provider = req.provider.clone();
     let surface = req.surface.clone();
+    crate::observability::metrics::set_proxy_fields(
+        &obs,
+        "execute_raw",
+        Some(provider.clone()),
+        req.model.clone(),
+    );
     let span = tracing::info_span!("execute_raw", provider = %provider);
 
     let context_id = auth.workspace_id.to_string();
@@ -843,6 +914,7 @@ async fn execute_raw_handler(
         }
         Ok(Err(e)) => {
             tracing::warn!(err = %e, "execute-raw failed");
+            crate::observability::metrics::apply_execute_failure(&obs, &e);
             let latency_ms = start.elapsed().as_millis();
             analytics.track_proxy_error(
                 "/v1/execute-raw",
@@ -864,6 +936,12 @@ async fn execute_raw_handler(
         }
         Err(_) => {
             tracing::warn!("execute-raw exceeded 60s timeout");
+            crate::observability::metrics::apply_execute_failure(
+                &obs,
+                &crate::execute::ExecuteError::Other(
+                    "execute-raw exceeded 60s client timeout".into(),
+                ),
+            );
             let latency_ms = start.elapsed().as_millis();
             analytics.track_proxy_error(
                 "/v1/execute-raw",
