@@ -3,19 +3,25 @@
 //! Core routing engine with SSE streaming, Handlebars templating, envelope encryption (Put), and observability.
 //! Serves API under /v1 and static frontend from current dir (for local testing).
 
+use promptkeeper::observability::init_observability;
 use promptkeeper::routes::app_router;
 use promptkeeper::secrets::SecretEnveloper;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tower_http::services::ServeDir;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "promptkeeper=info,tower_http=info".into()))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    let prometheus_handle = init_observability()?;
+    let upkeep = prometheus_handle.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            upkeep.run_upkeep();
+        }
+    });
 
     // Database pool (PostgreSQL).
     let database_url =
@@ -46,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(addr = %listener.local_addr()?, "listening");
 
     let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| ".".to_string());
-    let app = app_router(secrets, db)
+    let app = app_router(secrets, db, prometheus_handle)
         .await?
         .fallback_service(ServeDir::new(static_dir));
 

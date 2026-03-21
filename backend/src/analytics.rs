@@ -122,5 +122,174 @@ impl AnalyticsReporter {
             }),
         );
     }
+
+    /// User stored a provider API key (POST /v1/keys success).
+    pub fn track_key_stored(
+        &self,
+        surface: &str,
+        user_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
+        provider: &str,
+    ) {
+        self.enqueue(
+            "key_stored",
+            json!({
+                "distinct_id": user_id.to_string(),
+                "surface": surface,
+                "workspace_id": workspace_id.to_string(),
+                "provider": provider,
+            }),
+        );
+    }
+
+    /// User stored a prompt template (POST /v1/prompts success). `provider` is `"unknown"` when omitted.
+    pub fn track_prompt_stored(
+        &self,
+        surface: &str,
+        user_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
+        provider: &str,
+    ) {
+        self.enqueue(
+            "prompt_stored",
+            json!({
+                "distinct_id": user_id.to_string(),
+                "surface": surface,
+                "workspace_id": workspace_id.to_string(),
+                "provider": provider,
+            }),
+        );
+    }
+
+    /// User attempted to store a key for a provider that is not in the supported catalog.
+    pub fn track_key_store_provider_not_supported(
+        &self,
+        surface: &str,
+        user_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
+        provider: &str,
+    ) {
+        self.enqueue(
+            "key_store_provider_not_supported",
+            json!({
+                "distinct_id": user_id.to_string(),
+                "surface": surface,
+                "workspace_id": workspace_id.to_string(),
+                "provider": provider,
+            }),
+        );
+    }
+
+    // --- One event per HTTP API route (auth, parse failures, etc.) ---
+
+    /// POST /v1/auth/register succeeded.
+    pub fn track_user_registered(
+        &self,
+        surface: &str,
+        user_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
+    ) {
+        self.enqueue(
+            "user_registered",
+            json!({
+                "distinct_id": user_id.to_string(),
+                "surface": surface,
+                "workspace_id": workspace_id.to_string(),
+                "endpoint": "/v1/auth/register",
+            }),
+        );
+    }
+
+    /// POST /v1/auth/register rejected (`reason` is a stable code, no PII).
+    pub fn track_register_failed(&self, surface: &str, reason: &str) {
+        self.enqueue(
+            "register_failed",
+            json!({
+                "distinct_id": "anonymous",
+                "surface": surface,
+                "endpoint": "/v1/auth/register",
+                "reason": reason,
+            }),
+        );
+    }
+
+    /// POST /v1/auth/login succeeded (session issued).
+    pub fn track_user_logged_in(&self, surface: &str, user_id: uuid::Uuid) {
+        self.enqueue(
+            "user_logged_in",
+            json!({
+                "distinct_id": user_id.to_string(),
+                "surface": surface,
+                "endpoint": "/v1/auth/login",
+            }),
+        );
+    }
+
+    /// POST /v1/auth/login failed (`reason` is generic to avoid user enumeration).
+    pub fn track_login_failed(&self, surface: &str, reason: &str) {
+        self.enqueue(
+            "login_failed",
+            json!({
+                "distinct_id": "anonymous",
+                "surface": surface,
+                "endpoint": "/v1/auth/login",
+                "reason": reason,
+            }),
+        );
+    }
+
+    /// POST /v1/execute body was not valid JSON (after auth).
+    pub fn track_execute_request_parse_error(
+        &self,
+        user_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
+    ) {
+        self.enqueue(
+            "execute_request_parse_error",
+            json!({
+                "distinct_id": user_id.to_string(),
+                "surface": "unknown",
+                "workspace_id": workspace_id.to_string(),
+                "endpoint": "/v1/execute",
+            }),
+        );
+    }
+
+    /// POST /v1/execute-raw body was not valid JSON (after auth).
+    pub fn track_execute_raw_request_parse_error(
+        &self,
+        user_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
+    ) {
+        self.enqueue(
+            "execute_raw_request_parse_error",
+            json!({
+                "distinct_id": user_id.to_string(),
+                "surface": "unknown",
+                "workspace_id": workspace_id.to_string(),
+                "endpoint": "/v1/execute-raw",
+            }),
+        );
+    }
+
+    /// POST /v1/keys or /v1/prompts when KMS/Put is not configured (503).
+    pub fn track_put_endpoint_unavailable(
+        &self,
+        endpoint: &str,
+        surface: &str,
+        user_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
+    ) {
+        self.enqueue(
+            "put_endpoint_unavailable",
+            json!({
+                "distinct_id": user_id.to_string(),
+                "surface": surface,
+                "workspace_id": workspace_id.to_string(),
+                "endpoint": endpoint,
+                "reason": "kms_not_configured",
+            }),
+        );
+    }
 }
 

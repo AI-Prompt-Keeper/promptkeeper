@@ -8,7 +8,8 @@ description = "High-performance LLM proxy with streaming support"
 axum = { version = "0.7", features = ["json", "macros", "tokio", "http1"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+http = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 handlebars = "4.4"
@@ -37,7 +38,10 @@ hex = "0.4"
 langchain-rust = { version = "4.6", default-features = false }
 async-stream = "0.3"
 ureq = "3"
+metrics = "0.23"
+http-body = "1"
+metrics-exporter-prometheus = "0.16"
+http-body-util = "0.1"
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }
-http-body-util = "0.1"

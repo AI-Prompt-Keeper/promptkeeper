@@ -6,8 +6,10 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
+use metrics_exporter_prometheus::PrometheusHandle;
 use promptkeeper::routes::app_router;
 use serde_json::json;
+use std::sync::OnceLock;
 use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
@@ -57,15 +59,27 @@ fn test_db_url() -> String {
     std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgres://localhost/promptkeeper".into())
 }
 
+static PROM_HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
+
+fn test_prometheus_handle() -> PrometheusHandle {
+    PROM_HANDLE
+        .get_or_init(|| promptkeeper::observability::init_observability().expect("observability init"))
+        .clone()
+}
+
 /// Create a test app with no KMS (secrets disabled). Uses lazy pool that won't connect until queried.
 async fn test_app_no_kms() -> axum::Router {
     let pool = sqlx::PgPool::connect_lazy(&test_db_url()).expect("lazy pg pool");
-    app_router(None, pool).await.expect("app_router")
+    app_router(None, pool, test_prometheus_handle())
+        .await
+        .expect("app_router")
 }
 
 /// Create a test app. For tests that need KMS, pass Some(enveloper); otherwise None.
 async fn test_app_with_pool(pool: sqlx::PgPool) -> axum::Router {
-    app_router(None, pool).await.expect("app_router")
+    app_router(None, pool, test_prometheus_handle())
+        .await
+        .expect("app_router")
 }
 
 /// Create app with function "test_fn_disabled" (primary=test_provider_disabled, no backups).
@@ -212,8 +226,50 @@ async fn health_returns_200_and_ok() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().get("x-request-id").is_some());
     let body = body_string(response.into_body()).await;
     assert_eq!(body, "ok");
+}
+
+#[tokio::test]
+async fn health_live_returns_ok_json() {
+    let app = test_app_no_kms().await;
+    let response = app
+        .oneshot(Request::get("/health/live").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(response.headers().get("x-request-id").is_some());
+    let body = body_string(response.into_body()).await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v.get("status").and_then(|x| x.as_str()), Some("ok"));
+}
+
+#[tokio::test]
+async fn health_ready_returns_status_json() {
+    let app = test_app_no_kms().await;
+    let response = app
+        .oneshot(Request::get("/health/ready").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert!(
+        response.status() == StatusCode::OK || response.status() == StatusCode::SERVICE_UNAVAILABLE
+    );
+    let body = body_string(response.into_body()).await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(v.get("status").is_some());
+}
+
+#[tokio::test]
+async fn metrics_endpoint_returns_prometheus_text() {
+    let app = test_app_no_kms().await;
+    let response = app
+        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_string(response.into_body()).await;
+    assert!(body.contains("prke_") || body.is_empty());
 }
 
 #[tokio::test]
