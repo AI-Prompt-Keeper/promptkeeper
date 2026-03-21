@@ -1,0 +1,104 @@
+PromptKeeper Proprietary License v1.0
+
+Copyright (c) 2026 PromptKeeper
+
+This license applies to all files located in directories explicitly 
+marked as governed by the PromptKeeper Proprietary License.
+
+------------------------------------------------------------------
+
+1. Grant of Rights
+
+Subject to the terms of this license, you are granted a limited, 
+non-exclusive, non-transferable, non-sublicensable license to:
+
+- View, download, and modify the source code for personal, 
+  non-commercial, educational, or evaluation purposes;
+- Execute the software solely for the purpose of personal 
+  testing or non-production internal evaluation.
+
+Any use of this software to facilitate commercial operations, 
+revenue-generating activities, or production-grade internal 
+infrastructure requires a separate Commercial License.
+
+------------------------------------------------------------------
+
+2. Restrictions
+
+You may NOT, without explicit written permission from PromptKeeper:
+
+a) Provide the software, or any portion thereof, as a hosted, 
+   managed, or "as-a-service" offering to any third party;
+
+b) Use the software to power the backend of a commercial 
+   product or service;
+
+c) Offer a competing product or service based substantially 
+   on the logic, schema, or architecture of this software;
+
+d) Sell, lease, sublicense, or redistribute the software 
+   (or any derivative work) as part of a commercial package;
+
+e) Remove, obscure, or alter any copyright, trademark, or 
+   license notices contained within the source code.
+
+------------------------------------------------------------------
+
+3. Commercial Licensing
+
+Commercial use, including use by an organization for internal 
+production or the provision of paid services, is strictly 
+prohibited under this license. 
+
+To obtain a Commercial License, please contact:
+Licensing: licensing@promptkeeper.dev
+
+------------------------------------------------------------------
+
+4. Ownership & Intellectual Property
+
+The software is licensed, not sold. PromptKeeper retains all 
+right, title, and interest in and to the software, including 
+all intellectual property rights therein. No rights are 
+granted by implication, estoppel, or otherwise.
+
+------------------------------------------------------------------
+
+5. No Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, 
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF 
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND 
+NON-INFRINGEMENT. THE ENTIRE RISK AS TO THE QUALITY AND 
+PERFORMANCE OF THE SOFTWARE IS WITH YOU.
+
+------------------------------------------------------------------
+
+6. Limitation of Liability
+
+IN NO EVENT SHALL PROMPTKEEPER OR ITS CONTRIBUTORS BE LIABLE 
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, LOSS OF 
+USE, DATA, OR PROFITS) ARISING IN ANY WAY OUT OF THE USE OF 
+THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------------
+
+7. Termination
+
+This license terminates automatically and immediately if you 
+breach any of its terms. Upon termination, you must cease all 
+use of the software and destroy all copies in your possession.
+
+------------------------------------------------------------------
+
+8. Updates to License
+
+PromptKeeper reserves the right to update this license for 
+future versions of the software. Use of a specific version 
+of the software is governed by the license version included 
+with that release.
+
+------------------------------------------------------------------
+
+END OF TERMS
