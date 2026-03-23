@@ -2,7 +2,7 @@
 
 Example Android app that integrates the [PromptKeeper Android SDK](https://github.com/AI-Prompt-Keeper/promptkeeper) from Maven Central. It demonstrates:
 
-- **Text (OpenAI)**: Run `exec()` with a text prompt and stream the response.
+- **Text (OpenAI / Gemini / Anthropic)**: Registers stored prompt `text` (`{{prompt}}`), then `exec(functionId = "text", ...)` and streams the response.
 - **Image (Gemini)**: Run `exec()` with an image-generation prompt and display the result (base64 or URL).
 
 ## Requirements

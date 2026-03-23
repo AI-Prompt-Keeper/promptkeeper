@@ -7,7 +7,7 @@ use crate::db::{
     format_unsupported_provider_message, get_provider_status, get_supported_providers_list,
     load_provider_api_key, FunctionMeta, FunctionStoreTrait, ProviderStatus,
 };
-use crate::routes::request::{ExecuteRawRequest, ExecuteRequest};
+use crate::routes::request::ExecuteRequest;
 use crate::templates::render_prompt;
 use axum::response::sse::Event;
 use futures_util::stream::{Stream, StreamExt};
@@ -536,54 +536,6 @@ fn stream_gemini(
     };
 
     Ok(Box::pin(stream))
-}
-
-/// Execute raw prompt: no stored function. Renders prompt with variables (if any), sends to the given provider.
-/// Provider is required; user must have a key for that provider. No fallback to other providers.
-#[tracing::instrument(skip(state, req))]
-pub async fn execute_raw_request(
-    state: ExecuteState,
-    req: ExecuteRawRequest,
-    context_id: &str,
-    user_id: Uuid,
-    workspace_id: Uuid,
-) -> Result<
-    Pin<Box<dyn Stream<Item = Result<Event, axum::Error>> + Send>>,
-    ExecuteError,
-> {
-    let provider = req.provider.trim().to_lowercase();
-    if provider.is_empty() {
-        let list = get_supported_providers_list(&state.db)
-            .await
-            .unwrap_or_default();
-        return Err(ExecuteError::UnsupportedProvider(
-            format_unsupported_provider_message("", &list),
-        ));
-    }
-
-    let rendered = render_prompt(&req.prompt, &req.variables)
-        .map_err(|e| ExecuteError::Render(e.to_string()))?;
-
-    let meta = FunctionMeta {
-        primary_provider: provider.clone(),
-        backup_providers: vec![],
-        response_format: None,
-        prompt_template: String::new(),
-        provider_config: std::collections::HashMap::new(),
-        preferred_model: req.model.clone(),
-    };
-
-    execute_with_provider(
-        &state,
-        &meta,
-        &rendered,
-        context_id,
-        user_id,
-        workspace_id,
-        &provider,
-        req.model.as_deref(),
-    )
-    .await
 }
 
 /// Execute: resolve function, render prompt, try primary then backup providers until one succeeds.

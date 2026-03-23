@@ -1,37 +1,30 @@
-# PromptKeeper Example (iOS)
+# PromptKeeper iOS Example
 
-A minimal SwiftUI iOS app that demonstrates integration with the [PromptKeeper](../../sdks/ios) SDK. It uses the library via **Swift Package Manager** (local package reference) and showcases:
+Example iOS app that integrates the PromptKeeper Swift SDK. It demonstrates:
 
-- **Text exec** — streaming text from **OpenAI**, **Gemini**, or **Anthropic** using an **inline prompt** (no stored function; uses `execPrompt`).
+- **Text (OpenAI, Gemini, Anthropic)**: Registers a stored prompt `text` with template `{{prompt}}`, then runs `exec(functionId: "text", variables: ["prompt": ...])` and streams the response.
+- **Image (Gemini)**: Runs `exec` with a stored image prompt and displays base64 or URL output.
 
 ## Requirements
 
-- Xcode 15+ / Swift 5.9+
-- iOS 15+
-- Prompt Keeper API key (see below)
+- Xcode 15+ (Swift 5.9+).
+- iOS 17+ deployment target (adjust in project settings if needed).
 
 ## Setup
 
-1. **Open the project**  
-   Open `PromptKeeperExample.xcodeproj` in Xcode. The app depends on the PromptKeeper package at `../../sdks/ios` (relative to this folder). If you opened the repo at the root, the local package should resolve automatically.
+1. **Open the project**: Open `examples/ios/PromptKeeperExample.xcodeproj` (or the workspace if you use one).
 
-2. **Obtain a Prompt Keeper API key**  
-   Get your API key via the Prompt Keeper CLI (e.g. `prke login` or your backend’s registration flow). **Do not store plaintext API keys in source code or commit them.** This example uses in-memory configuration only; for production, use Keychain or a secure backend.
+2. **API keys**:
+   - **PromptKeeper API key** (`pk_...`): Obtain via your registration flow or CLI.
+   - **Provider keys**: Register OpenAI, Gemini, and/or Anthropic keys with PromptKeeper (e.g. via CLI) so the backend can call the LLM. The example does not embed provider secrets.
 
-3. **Configure provider keys on the server**  
-   Before running the app, store your OpenAI, Gemini, and/or Anthropic API keys on the Prompt Keeper server (e.g. via the CLI or your backend). The example app only calls `execPrompt`; it does not persist or send raw provider keys.
-
-4. **Run the app**  
-   Select an iOS Simulator or device and run (⌘R). Use the **Config** tab to enter your Prompt Keeper API key (session only). Use **Text Query** to choose a provider (radio buttons) and run an inline prompt via `execPrompt`.
+3. Run on Simulator or device (**⌘R**). Use the **Config** tab for the Prompt Keeper API key. Use **Text Query** to pick a provider and run against the stored `text` prompt.
 
 ## Project layout
 
-- `PromptKeeperExample/` — SwiftUI app target
-  - `Keys.swift` — Stub for API key (see comments; do not commit real keys).
-  - `Services/ExecService.swift` — Uses PromptKeeper `execPrompt` (inline prompt) and streams the selected provider’s output.
-  - `Services/StreamParser.swift` — Parses provider-specific SSE chunks (Foundation only).
-  - `Views/TextExecView.swift` — Inline prompt text exec via `execPrompt` with provider selection.
+- `Services/ExecService.swift` — `setPrompt` for `text` / `exec` streaming with provider-specific parsers.
+- `Views/TextExecView.swift` — Text streaming via stored prompt `text`.
 
-## No persistence
+## License
 
-The app does not persist the Prompt Keeper API key or any secrets. Configuration is in-memory for the current run only.
+See the repository root license.

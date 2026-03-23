@@ -255,23 +255,6 @@ impl AnalyticsReporter {
         );
     }
 
-    /// POST /v1/execute-raw body was not valid JSON (after auth).
-    pub fn track_execute_raw_request_parse_error(
-        &self,
-        user_id: uuid::Uuid,
-        workspace_id: uuid::Uuid,
-    ) {
-        self.enqueue(
-            "execute_raw_request_parse_error",
-            json!({
-                "distinct_id": user_id.to_string(),
-                "surface": "unknown",
-                "workspace_id": workspace_id.to_string(),
-                "endpoint": "/v1/execute-raw",
-            }),
-        );
-    }
-
     /// POST /v1/keys or /v1/prompts when KMS/Put is not configured (503).
     pub fn track_put_endpoint_unavailable(
         &self,

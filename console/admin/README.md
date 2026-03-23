@@ -17,7 +17,11 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3001](http://localhost:3001). Point the Test panel at your proxy by setting `NEXT_PUBLIC_EXECUTE_URL` (default `http://localhost:8080/v1/execute`).
+Open [http://localhost:3001](http://localhost:3001). Point the Test panel at your Prompt Keeper API:
+
+- `NEXT_PUBLIC_EXECUTE_URL` — default `http://localhost:8080/v1/execute`
+- `NEXT_PUBLIC_EXECUTE_FUNCTION_ID` — stored prompt name used for the editor template (default `test_console`). **Run** uploads the combined system/user text to `POST /v1/prompts` under this name, then calls `POST /v1/execute` with `function_id` and variable values (requires KMS / put-prompts enabled on the server).
+- `NEXT_PUBLIC_EXECUTE_API_KEY`, `NEXT_PUBLIC_EXECUTE_PROVIDER`, `NEXT_PUBLIC_EXECUTE_MODEL` — optional auth and defaults for the test request.
 
 ## Data
 

@@ -39,15 +39,17 @@ export default function TestConsole({
     setOutput("");
     setLoading(true);
     try {
-      const prompt = `${systemPrompt}\n\n${userPrompt}`.trim();
+      const template = `${systemPrompt}\n\n${userPrompt}`.trim();
       const provider = process.env.NEXT_PUBLIC_EXECUTE_PROVIDER || "openai";
       const model = process.env.NEXT_PUBLIC_EXECUTE_MODEL || undefined;
       const apiKey = process.env.NEXT_PUBLIC_EXECUTE_API_KEY || "";
       const executeUrl =
-        process.env.NEXT_PUBLIC_EXECUTE_RAW_URL ||
-        "http://localhost:8080/v1/execute-raw";
+        process.env.NEXT_PUBLIC_EXECUTE_URL ||
+        "http://localhost:8080/v1/execute";
+      const functionId =
+        process.env.NEXT_PUBLIC_EXECUTE_FUNCTION_ID || "test_console";
 
-      if (!prompt) {
+      if (!template) {
         throw new Error("Prompt is empty. Add system/user prompt text first.");
       }
 
@@ -59,19 +61,39 @@ export default function TestConsole({
         headers["X-API-Key"] = apiKey;
       }
 
-      const res = await fetch(
-        executeUrl,
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            prompt,
-            provider,
-            ...(model ? { model } : {}),
-            variables: varsMap,
-          }),
-        }
-      );
+      const executeOrigin = new URL(executeUrl);
+      const promptsUrl = `${executeOrigin.origin}/v1/prompts`;
+
+      const putRes = await fetch(promptsUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          name: functionId,
+          raw_secret: template,
+          provider,
+          ...(model ? { preferred_model: model } : {}),
+          surface: "web",
+        }),
+      });
+      if (!putRes.ok) {
+        const t = await putRes.text();
+        throw new Error(
+          t ||
+            `Failed to store prompt template (HTTP ${putRes.status}). Ensure KMS is configured for POST /v1/prompts.`
+        );
+      }
+
+      const res = await fetch(executeUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          function_id: functionId,
+          provider,
+          ...(model ? { model } : {}),
+          variables: varsMap,
+          surface: "web",
+        }),
+      });
       if (!res.ok) {
         const t = await res.text();
         throw new Error(t || `HTTP ${res.status}`);

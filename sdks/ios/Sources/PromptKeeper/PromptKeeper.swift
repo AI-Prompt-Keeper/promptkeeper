@@ -98,7 +98,8 @@ public final class PromptKeeper {
 
     // MARK: - Execute (streaming)
 
-    /// Executes a function: resolves prompt, injects variables, calls the configured LLM, and streams the response.
+    /// Executes a **stored** prompt by function id (`POST /v1/execute`). The prompt must exist on the server (e.g. via `setPrompt`).
+    /// Raw inline prompts are not supported by this SDK.
     /// - Parameters:
     ///   - functionId: Function identifier (e.g. `"default"`, `"customer_support_reply"`).
     ///   - variables: Optional map of variable names to values (Handlebars). Default: empty.
@@ -123,71 +124,6 @@ public final class PromptKeeper {
                     request.setAuth(apiKeyHolder.apiKey)
                     let body = ExecuteRequest(
                         function_id: functionId,
-                        variables: variables ?? [:],
-                        provider: provider,
-                        model: model,
-                        surface: surface
-                    )
-                    request.httpBody = try JSONEncoder().encode(body)
-
-                    let (bytes, response) = try await session.bytes(for: request)
-                    if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-                        var collected = Data()
-                        for try await b in bytes { collected.append(b) }
-                        throw PromptKeeperError.httpStatus(http.statusCode, body: collected)
-                    }
-
-                    try await StreamReader.readSSEBlocks(from: bytes) { block in
-                        let events = SSEParser.parse(block)
-                        for event in events {
-                            guard let data = event.data, !data.isEmpty else { continue }
-                            continuation.yield(.chunk(data))
-                            if let err = SSEParser.parseErrorPayload(data) {
-                                throw PromptKeeperError.serverError(err)
-                            }
-                        }
-                    }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in
-                task?.cancel()
-                task = nil
-            }
-        }
-    }
-
-    // MARK: - Execute with prompt (streaming)
-
-    /// Executes a raw text prompt without storing it as a function first.
-    /// Uses `POST /v1/execute-raw` with a `prompt` field (no stored function).
-    /// Useful for ad-hoc calls where you do not want to manage prompt versions on the server.
-    /// - Parameters:
-    ///   - prompt: Raw prompt text to execute (not stored on the backend).
-    ///   - variables: Optional map of variable names to values (Handlebars). Default: empty.
-    ///   - provider: Optional preferred provider (e.g. `"openai"`, `"anthropic"`, `"gemini"`).
-    ///   - model: Optional model override.
-    ///   - surface: Optional client surface tag for backend analytics. Default: `"ios"`.
-    /// - Returns: An async sequence of SSE events. Same semantics as `exec(functionId:...)`; each event's `data` contains provider payload. On error, a single event may contain JSON `{ "error": "..." }`.
-    public func execPrompt(
-        prompt: String,
-        variables: [String: String]? = nil,
-        provider: String? = nil,
-        model: String? = nil,
-        surface: String? = "ios"
-    ) -> AsyncThrowingStream<ExecStreamEvent, Error> {
-        AsyncThrowingStream { continuation in
-            var task: Task<Void, Never>? = Task {
-                do {
-                    let endpoint = baseURL.appendingPathComponent("v1/execute-raw")
-                    var request = URLRequest(url: endpoint)
-                    request.httpMethod = "POST"
-                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    request.setAuth(apiKeyHolder.apiKey)
-                    let body = ExecutePromptRequest(
-                        prompt: prompt,
                         variables: variables ?? [:],
                         provider: provider,
                         model: model,

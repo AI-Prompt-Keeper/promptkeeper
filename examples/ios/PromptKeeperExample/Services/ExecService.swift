@@ -18,7 +18,18 @@ final class ExecService: ObservableObject {
         client = PromptKeeper(apiKey: apiKey)
     }
 
-    /// Runs a text-generation exec by stored function id (e.g. OpenAI), streaming parsed content.
+    /// Registers a minimal stored prompt `text` with `{{prompt}}` so the Text tab can run via POST /v1/execute.
+    func ensureTextPromptTemplate() async throws {
+        guard let client = client else { throw ExecError.notConfigured }
+        _ = try await client.setPrompt(
+            name: "text",
+            rawSecret: "{{prompt}}",
+            provider: nil,
+            preferredModel: nil
+        )
+    }
+
+    /// Runs a text-generation exec by stored function id, streaming parsed content per provider.
     func runTextExec(
         functionId: String,
         variables: [String: String],
@@ -27,35 +38,10 @@ final class ExecService: ObservableObject {
         onChunk: @escaping (String) -> Void
     ) async throws {
         guard let client = client else { throw ExecError.notConfigured }
-        let stream = client.exec(functionId: functionId, variables: variables, provider: provider, model: model)
-        for try await event in stream {
-            if case .chunk(let data) = event {
-                if let text = OpenAIStreamParser.parseDeltaContent(from: data) {
-                    onChunk(text)
-                }
-            }
-        }
-    }
-
-    /// Runs a text-generation exec using an inline prompt (no stored function). Uses `execPrompt`.
-    func runTextExecPrompt(
-        prompt: String,
-        variables: [String: String] = [:],
-        provider: String? = "openai",
-        model: String? = nil,
-        onChunk: @escaping (String) -> Void
-    ) async throws {
-        guard let client = client else { throw ExecError.notConfigured }
         let providerNormalized = (provider ?? "openai").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let stream = client.execPrompt(
-            prompt: prompt,
-            variables: variables.isEmpty ? nil : variables,
-            provider: providerNormalized,
-            model: model
-        )
+        let stream = client.exec(functionId: functionId, variables: variables, provider: providerNormalized, model: model)
         for try await event in stream {
             if case .chunk(let data) = event {
-                // Provider-specific extraction with a safe fallback to raw chunk text.
                 let parsed: String?
                 switch providerNormalized {
                 case "openai":

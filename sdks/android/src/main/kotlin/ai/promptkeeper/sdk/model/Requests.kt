@@ -27,13 +27,3 @@ internal data class ExecuteRequest(
     val model: String? = null,
     val surface: String
 )
-
-/** Request body for POST /v1/execute-raw. Backend requires prompt and provider. */
-@Serializable
-internal data class ExecuteRawRequest(
-    val prompt: String,
-    val provider: String,
-    val model: String? = null,
-    val variables: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
-    val surface: String
-)
