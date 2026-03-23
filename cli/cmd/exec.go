@@ -15,29 +15,24 @@ import (
 )
 
 var execCmd = &cobra.Command{
-	Use:   "exec [prompt_title] [key=value...] [--raw-prompt \"...\"] [--provider provider]",
-	Short: "Execute a prompt",
-	Long: `Executes a stored prompt by function_id, or executes a raw inline prompt with --raw-prompt.
+	Use:   "exec [prompt_title] [key=value...] [--provider provider]",
+	Short: "Execute a stored prompt",
+	Long: `Executes a stored prompt by title (function_id). Variables are injected into the Handlebars template on the backend.
+Streams the LLM response to stdout in real-time.
 
-Stored prompt mode:
 Example: prke exec my_prompt name=Alice query="What is X?"
 
-Raw prompt mode:
-Example: prke exec --raw-prompt "Summarize {{text}}" --provider openai text="Hello world"
-
-Variables are injected into the Handlebars template on the backend.
-Streams the LLM response to stdout in real-time. If prompt_title is omitted (stored mode), an interactive form will guide you.`,
+If prompt_title is omitted, an interactive form will guide you.`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runExec,
 }
 
-var execProvider, execModel, execRawPrompt string
+var execProvider, execModel string
 
 func init() {
 	rootCmd.AddCommand(execCmd)
 	execCmd.Flags().StringVar(&execProvider, "provider", "", "Preferred provider (e.g. openai, anthropic)")
 	execCmd.Flags().StringVar(&execModel, "model", "", "LLM model override (e.g. gpt-4o, claude-3-5-sonnet)")
-	execCmd.Flags().StringVar(&execRawPrompt, "raw-prompt", "", "Execute raw prompt text directly (requires --provider)")
 }
 
 func runExec(cmd *cobra.Command, args []string) error {
@@ -48,12 +43,11 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 
 	title := ""
-	rawPrompt := strings.TrimSpace(execRawPrompt)
 	var varLines string
-	if rawPrompt == "" && len(args) >= 1 {
+	if len(args) >= 1 {
 		title = strings.TrimSpace(args[0])
 	}
-	if rawPrompt == "" && len(args) < 1 {
+	if len(args) < 1 {
 		if err := ui.FormExec(&title, &varLines); err != nil {
 			return err
 		}
@@ -75,43 +69,21 @@ func runExec(cmd *cobra.Command, args []string) error {
 		}
 		args = append([]string{title}, pairs...)
 	}
-	if rawPrompt == "" && title == "" {
+	if title == "" {
 		PrintFriendlyError(os.Stderr,
 			"exec requires a prompt title.",
-			"You did not provide a prompt title (stored mode).",
-			[]string{bin() + " exec my_prompt", bin() + " exec --raw-prompt \"Summarize {{text}}\" --provider openai text=hello"})
+			"You did not provide a prompt title.",
+			[]string{bin() + " exec my_prompt"})
 		return fmt.Errorf("missing prompt title")
 	}
-	if rawPrompt != "" {
-		dbg("exec start: mode=raw")
-	} else {
-		dbg("exec start: prompt_title=%q", title)
-	}
+	dbg("exec start: prompt_title=%q", title)
 
-	if rawPrompt == "" {
-		if err := validate.ValidatePromptTitle(title); err != nil {
-			PrintFriendlyError(os.Stderr,
-				"Invalid prompt title.",
-				err.Error(),
-				[]string{bin() + " exec my_prompt", "# Use letters, numbers, spaces, underscore, or hyphen."})
-			return err
-		}
-	}
-	if rawPrompt != "" {
-		if err := validate.ValidateInputLength(rawPrompt, "raw prompt"); err != nil {
-			PrintFriendlyError(os.Stderr,
-				"Invalid raw prompt.",
-				err.Error(),
-				[]string{bin() + " exec --raw-prompt \"Summarize {{text}}\" --provider openai text=hello"})
-			return err
-		}
-		if strings.TrimSpace(execProvider) == "" {
-			PrintFriendlyError(os.Stderr,
-				"--provider is required with --raw-prompt.",
-				"Raw prompt execution needs an explicit provider (e.g. openai, anthropic, gemini).",
-				[]string{bin() + " exec --raw-prompt \"Summarize {{text}}\" --provider openai text=hello"})
-			return fmt.Errorf("provider required for raw prompt mode")
-		}
+	if err := validate.ValidatePromptTitle(title); err != nil {
+		PrintFriendlyError(os.Stderr,
+			"Invalid prompt title.",
+			err.Error(),
+			[]string{bin() + " exec my_prompt", "# Use letters, numbers, spaces, underscore, or hyphen."})
+		return err
 	}
 	if err := validate.ValidateProvider(execProvider); err != nil {
 		PrintFriendlyError(os.Stderr,
@@ -129,11 +101,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 
 	variables := make(map[string]interface{})
-	startIdx := 1
-	if rawPrompt != "" {
-		startIdx = 0
-	}
-	for i := startIdx; i < len(args); i++ {
+	for i := 1; i < len(args); i++ {
 		arg := args[i]
 		if strings.HasPrefix(arg, "--") {
 			continue
@@ -188,17 +156,9 @@ func runExec(cmd *cobra.Command, args []string) error {
 		}
 		return nil
 	}
-	if rawPrompt != "" {
-		err = client.ExecuteRaw(rawPrompt, variables, execProvider, execModel, streamWriter, debugOut)
-	} else {
-		err = client.Execute(title, variables, execProvider, execModel, streamWriter, debugOut)
-	}
+	err = client.Execute(title, variables, execProvider, execModel, streamWriter, debugOut)
 	if err != nil {
-		if rawPrompt != "" {
-			PrintAPIError(os.Stderr, err.Error(), "Check provider key setup ('store key'), backend reachability, and raw prompt/provider validity.")
-		} else {
-			PrintAPIError(os.Stderr, err.Error(), "Check that the prompt exists, the backend is reachable, and the provider is configured.")
-		}
+		PrintAPIError(os.Stderr, err.Error(), "Check that the prompt exists, the backend is reachable, and the provider is configured.")
 	}
 	return err
 }

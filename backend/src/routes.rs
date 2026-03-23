@@ -64,23 +64,6 @@ pub mod request {
         pub surface: String,
     }
 
-    /// POST /v1/execute-raw body: raw prompt text, no stored function. Sent directly to provider.
-    #[derive(Debug, Clone, Deserialize)]
-    #[serde(deny_unknown_fields)]
-    pub struct ExecuteRawRequest {
-        /// Raw prompt text. May include Handlebars placeholders if variables is provided.
-        pub prompt: String,
-        /// Provider to use (e.g. "openai", "anthropic", "gemini"). Required. User must have a key for this provider (POST /v1/keys).
-        pub provider: String,
-        /// Optional: model override. If omitted, Anthropic defaults to `claude-sonnet-4-6` (server-side default).
-        pub model: Option<String>,
-        /// Optional: variable substitutions for Handlebars in prompt. Default: {}.
-        #[serde(default)]
-        pub variables: HashMap<String, serde_json::Value>,
-        /// Optional client-facing interface tag, e.g. "cli", "android", "web". Defaults to "unknown".
-        #[serde(default = "default_surface")]
-        pub surface: String,
-    }
 }
 
 /// In-memory rate limiter: one register per IP per window (e.g. 10 minutes).
@@ -261,7 +244,6 @@ pub async fn app_router(
         .route("/health/ready", get(health_ready_route))
         .route("/metrics", get(metrics_route))
         .route("/v1/execute", post(execute_handler))
-        .route("/v1/execute-raw", post(execute_raw_handler))
         .route("/v1/auth/register-challenge", get(register_challenge_handler))
         .route("/v1/auth/register", post(register_handler))
         .route("/v1/auth/login", post(login_handler))
@@ -833,139 +815,6 @@ async fn execute_handler(
                 Box::pin(futures_util::stream::iter(vec![Ok(event)]))
             }
         };
-
-    Sse::new(event_stream)
-}
-
-/// POST /v1/execute-raw: raw prompt text, no stored function. Provider required; model and variables optional.
-/// Requires auth. Streams SSE like /v1/execute. If user has no key for the provider, returns error in SSE.
-async fn execute_raw_handler(
-    State(state): State<AppState>,
-    auth: Auth,
-    Extension(obs): Extension<ObservabilityShared>,
-    body: Bytes,
-) -> Sse<impl Stream<Item = Result<Event, axum::Error>> + Send + 'static> {
-    let execute_state = state.execute;
-    let analytics = state.analytics;
-    let start = Instant::now();
-
-    type SseStream = Pin<Box<dyn Stream<Item = Result<Event, axum::Error>> + Send + 'static>>;
-
-    let req: crate::routes::request::ExecuteRawRequest = match serde_json::from_slice(body.as_ref()) {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(err = %e, "execute-raw request body parse failed");
-            crate::observability::metrics::apply_execute_failure(
-                &obs,
-                &crate::execute::ExecuteError::Other(format!("json: {e}")),
-            );
-            analytics.track_execute_raw_request_parse_error(auth.user_id, auth.workspace_id);
-            let event = Event::default()
-                .json_data(serde_json::json!({ "error": e.to_string() }))
-                .unwrap();
-            let s: SseStream = Box::pin(futures_util::stream::iter(vec![Ok(event)]));
-            return Sse::new(s);
-        }
-    };
-
-    let provider = req.provider.clone();
-    let surface = req.surface.clone();
-    crate::observability::metrics::set_proxy_fields(
-        &obs,
-        "execute_raw",
-        Some(provider.clone()),
-        req.model.clone(),
-    );
-    let span = tracing::info_span!("execute_raw", provider = %provider);
-
-    let context_id = auth.workspace_id.to_string();
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        crate::execute::execute_raw_request(
-            execute_state,
-            req,
-            &context_id,
-            auth.user_id,
-            auth.workspace_id,
-        )
-        .instrument(span),
-    )
-    .await;
-
-    let event_stream: SseStream = match result {
-        Ok(Ok(stream)) => {
-            let latency_ms = start.elapsed().as_millis();
-            tracing::info!(provider = %provider, latency_ms = %latency_ms, "execute-raw stream ready");
-            analytics.track_proxy_success(
-                "/v1/execute-raw",
-                &surface,
-                auth.user_id,
-                auth.workspace_id,
-                latency_ms,
-            );
-            analytics.track_added_latency(
-                "/v1/execute-raw",
-                &surface,
-                auth.user_id,
-                auth.workspace_id,
-                latency_ms,
-            );
-            Box::pin(stream)
-        }
-        Ok(Err(e)) => {
-            tracing::warn!(err = %e, "execute-raw failed");
-            crate::observability::metrics::apply_execute_failure(&obs, &e);
-            let latency_ms = start.elapsed().as_millis();
-            analytics.track_proxy_error(
-                "/v1/execute-raw",
-                &surface,
-                auth.user_id,
-                auth.workspace_id,
-                &e.to_string(),
-                latency_ms,
-            );
-            analytics.track_added_latency(
-                "/v1/execute-raw",
-                &surface,
-                auth.user_id,
-                auth.workspace_id,
-                latency_ms,
-            );
-            let event = crate::execute::execute_error_to_event(&e);
-            Box::pin(futures_util::stream::iter(vec![Ok(event)]))
-        }
-        Err(_) => {
-            tracing::warn!("execute-raw exceeded 60s timeout");
-            crate::observability::metrics::apply_execute_failure(
-                &obs,
-                &crate::execute::ExecuteError::Other(
-                    "execute-raw exceeded 60s client timeout".into(),
-                ),
-            );
-            let latency_ms = start.elapsed().as_millis();
-            analytics.track_proxy_error(
-                "/v1/execute-raw",
-                &surface,
-                auth.user_id,
-                auth.workspace_id,
-                "execute-raw exceeded 60s client timeout",
-                latency_ms,
-            );
-            analytics.track_added_latency(
-                "/v1/execute-raw",
-                &surface,
-                auth.user_id,
-                auth.workspace_id,
-                latency_ms,
-            );
-            let event = crate::execute::execute_error_to_event(
-                &crate::execute::ExecuteError::Other(
-                    "execute-raw exceeded 60s client timeout".into(),
-                ),
-            );
-            Box::pin(futures_util::stream::iter(vec![Ok(event)]))
-        }
-    };
 
     Sse::new(event_stream)
 }

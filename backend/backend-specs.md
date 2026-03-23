@@ -71,49 +71,6 @@ When the request is invalid or execute fails, the response is still SSE: a singl
 
 ---
 
-### 1b. Execute raw (LLM with inline prompt, no stored function)
-
-Sends a **raw prompt** directly to a provider. No `function_id`; the prompt is **not stored**. Same auth and SSE stream format as Execute. Use when you don't have (or don't want to use) a stored function.
-
-| Property | Value |
-|----------|--------|
-| **Method** | `POST` |
-| **Path** | `/v1/execute-raw` |
-| **Request body** | JSON (see parameters below) |
-| **Response** | `text/event-stream` (SSE) |
-| **Auth** | Required: Bearer token or X-API-Key (same as Execute). |
-
-#### Request parameters (JSON body)
-
-| Name | Type | Mandatory | Description |
-|------|------|-----------|-------------|
-| `prompt` | string | Yes | Raw prompt text. May include Handlebars placeholders (e.g. `{{name}}`) if `variables` is provided. |
-| `provider` | string | Yes | Provider to use (e.g. `"openai"`, `"anthropic"`, `"gemini"`). User must have a key for this provider (POST /v1/keys). |
-| `model` | string | No | Model override. If omitted, provider default is used (for Anthropic: `claude-sonnet-4-6`). |
-| `variables` | object | No | Map of variable names to JSON values. Injected into the prompt via Handlebars. Default: `{}`. |
-| `surface` | string | No | Client-facing interface tag (e.g. `"cli"`, `"android"`, `"web"`). Default: `"unknown"`. |
-
-**Example request body:**
-
-```json
-{
-  "prompt": "Summarize in one sentence: {{text}}",
-  "provider": "openai",
-  "model": "gpt-4o-mini",
-  "variables": { "text": "The quick brown fox jumps over the lazy dog." }
-}
-```
-
-#### Return value (success)
-
-Same as Execute: SSE stream of events with `content` and `provider`.
-
-#### Return value (error)
-
-Same as Execute: errors delivered in SSE (HTTP 200). Typical errors: missing/invalid body; empty or unsupported `provider`; **provider key not found** (user has not stored a key for that provider); render error; provider/LLM error; timeout.
-
----
-
 ### 2a. Put key (store provider API key)
 
 Stores a provider API key (e.g. OpenAI, Anthropic, Google Gemini). Uses envelope encryption (DEK + KMS). Raw secret is never logged. Requires KMS and auth.
@@ -309,7 +266,6 @@ JSON body: `{ "error": "invalid email or password" }` or `{ "error": "login fail
 | Method | Path | Request body | Response | Mandatory params |
 |--------|------|--------------|----------|------------------|
 | POST | `/v1/execute` | JSON: `function_id`, `variables`, `provider`? | SSE stream | `function_id` |
-| POST | `/v1/execute-raw` | JSON: `prompt`, `provider`, `model`?, `variables`? | SSE stream | `prompt`, `provider` |
 | POST | `/v1/keys` | JSON: `raw_secret`, `provider` | JSON | `raw_secret`, `provider` |
 | POST | `/v1/prompts` | JSON: `name`, `raw_secret`, `provider`? | JSON | `name`, `raw_secret` |
 | POST | `/v1/auth/register` | JSON: `email`, `password`, `name`? | JSON: `user` | `email`, `password` |

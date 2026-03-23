@@ -2,6 +2,8 @@
 
 Kotlin/Android SDK for the [Prompt Keeper](https://github.com/promptkeeper/promptkeeper) API at **https://api.promptkeeper.ai**. Supports **init** (in-memory API key), **setKey**, **setPrompt**, and **exec** (streaming). Register and obtain an API key outside this SDK; the SDK does not handle registration or login.
 
+**Not supported:** inline/raw prompts (`POST /v1/execute-raw`). Use **stored** prompts only: call `setPrompt` to register a template, then `exec` with the same function name as `function_id`.
+
 ## Requirements
 
 - Kotlin 1.9+
@@ -85,12 +87,7 @@ val response = sdk.setPrompt(
 
 ### 4. Exec (streaming)
 
-There are two ways to execute:
-
-- **Stored function**: resolve a prompt template by id (`exec`).
-- **Inline prompt**: send raw prompt text without storing it first (`execPrompt`).
-
-#### 4.1 Stored function (`exec`)
+Execution always uses a **stored prompt** (registered with `setPrompt`) and `POST /v1/execute` with the prompt **title** as `function_id`.
 
 ```kotlin
 // From a coroutine or ViewModel
@@ -106,23 +103,6 @@ lifecycleScope.launch {
      }
 }
 ```
-
-#### 4.2 Raw prompt (execPrompt)
-
-Run a raw text prompt without storing a function. The SDK calls the backend POST /v1/execute-raw with prompt, provider, optional model and variables. Same SSE stream as exec.
-
-```kotlin
-lifecycleScope.launch {
-    sdk.execPrompt(
-        prompt = "You are a helpful assistant. Reply to: What is the return policy?",
-        provider = "openai",
-        model = "gpt-4o-mini"
-    ).catch { e -> /* handle PromptKeeperException */ }
-     .collect { chunk -> println(chunk) }
-}
-```
-
-Calls backend POST /v1/execute-raw (raw prompt, no stored function).
 
 Errors from the server (e.g. function not found) are delivered as `PromptKeeperException.Server(message)`. HTTP errors as `PromptKeeperException.Http(statusCode, body)`.
 
@@ -159,8 +139,7 @@ sdk.exec(functionId = "image_gen", variables = mapOf("prompt" to "a cat")).colle
 | `PromptKeeper.getInstance()` | Returns instance set by `initialize`, or null. |
 | `setKey(rawSecret, provider)` | POST /v1/keys — store provider API key. |
 | `setPrompt(name, rawSecret, provider?, preferredModel?)` | POST /v1/prompts — store prompt template. |
-| `exec(functionId, variables?, provider?, model?)` | POST /v1/execute — stream LLM response as `Flow<String>` using a stored function. |
-| `execPrompt(prompt, variables?, provider, model?)` | POST /v1/execute-raw — stream LLM response as `Flow<String>` using a raw prompt (no stored function). `provider` required. |
+| `exec(functionId, variables?, provider?, model?)` | POST /v1/execute — stream LLM response as `Flow<String>` using a stored prompt (title = `functionId`). |
 
 ## Exceptions
 

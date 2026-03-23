@@ -4,6 +4,8 @@
 
 **Summary:** The SDK talks to the Prompt Keeper backend (API key storage, prompt templates, and LLM execution). It is distributed via Swift Package Manager (SPM). All network calls are async and the API key is held in memory only for the current run.
 
+**Execution model:** This SDK supports **stored prompts only** — register a prompt with `setPrompt`, then run it with `exec(functionId:...)`. **Raw / inline prompt execution** (e.g. execute-without-storing) is **not** exposed in this SDK.
+
 ---
 
 ## 1. Requirements
@@ -61,7 +63,11 @@ Store a provider key (e.g. OpenAI, Anthropic) on the Prompt Keeper server. The r
 **Signature:**
 
 ```swift
-func setKey(rawSecret: String, provider: String) async throws -> PutKeyResponse
+func setKey(
+    rawSecret: String,
+    provider: String,
+    surface: String? = "ios"
+) async throws -> PutKeyResponse
 ```
 
 **Parameters:**
@@ -70,6 +76,7 @@ func setKey(rawSecret: String, provider: String) async throws -> PutKeyResponse
 |------------|--------|----------------------------------------------|
 | `rawSecret`| String | Raw API key (e.g. `sk-...`). Sent to server. |
 | `provider` | String | Provider id, e.g. `"openai"`, `"anthropic"`. |
+| `surface`  | String? | Optional analytics tag (e.g. `"ios"`). Default: `"ios"`. |
 
 **Returns:** `PutKeyResponse` with Swift properties: `versionId`, `createdAt`, `kmsKeyArn`, `fingerprint` (all from server; optional fields are `String?`).
 
@@ -93,7 +100,8 @@ func setPrompt(
     name: String,
     rawSecret: String,
     provider: String? = nil,
-    preferredModel: String? = nil
+    preferredModel: String? = nil,
+    surface: String? = "ios"
 ) async throws -> PutPromptResponse
 ```
 
@@ -105,6 +113,7 @@ func setPrompt(
 | `rawSecret`    | String | Raw prompt body (e.g. Handlebars). Sent to server only.   |
 | `provider`     | String?| Default provider (e.g. `"openai"`).                        |
 | `preferredModel`| String?| Default model (e.g. `"gpt-4o"`, `"claude-3-5-sonnet-20240620"`). |
+| `surface`      | String? | Optional analytics tag. Default: `"ios"`. |
 
 **Returns:** `PutPromptResponse` with `versionId`, `createdAt`, `kmsKeyArn`, `fingerprint`.
 
@@ -132,7 +141,8 @@ func exec(
     functionId: String,
     variables: [String: String]? = nil,
     provider: String? = nil,
-    model: String? = nil
+    model: String? = nil,
+    surface: String? = "ios"
 ) -> AsyncThrowingStream<ExecStreamEvent, Error>
 ```
 
@@ -144,6 +154,7 @@ func exec(
 | `variables`| [String: String]?| Handlebars variables. Default `nil` → empty.          |
 | `provider` | String?         | Override provider (e.g. `"openai"`, `"anthropic"`).   |
 | `model`    | String?         | Override model.                                       |
+| `surface`  | String?         | Optional analytics tag. Default: `"ios"`. |
 
 **Returns:** `AsyncThrowingStream<ExecStreamEvent, Error>`. Each element is:
 
@@ -184,47 +195,7 @@ do {
 }
 ```
 
----
-
-## 6b. Executing a raw prompt (`execPrompt`) — streaming
-
-Run a **raw text prompt** without storing it as a function first. The backend receives the prompt and optional variables/provider/model and streams the response. Use endpoint `POST /v1/execute-raw` (same SSE shape as `exec`); use this for ad-hoc or one-off calls.
-
-**Signature:**
-
-```swift
-func execPrompt(
-    prompt: String,
-    variables: [String: String]? = nil,
-    provider: String? = nil,
-    model: String? = nil
-) -> AsyncThrowingStream<ExecStreamEvent, Error>
-```
-
-**Parameters:**
-
-| Parameter   | Type            | Description                                           |
-|------------|-----------------|-------------------------------------------------------|
-| `prompt`   | String          | Raw prompt text to execute (not stored on the server). |
-| `variables`| [String: String]?| Optional Handlebars variables. Default `nil` → empty. |
-| `provider` | String?         | Preferred provider (e.g. `"openai"`, `"anthropic"`, `"gemini"`). Backend requires a provider for raw execution. |
-| `model`    | String?         | Model override.                                       |
-
-**Returns:** Same as `exec`: `AsyncThrowingStream<ExecStreamEvent, Error>`. Each element is `ExecStreamEvent.chunk(String)` (provider payload). Errors are thrown or delivered in SSE `{ "error": "..." }`.
-
-**Example:**
-
-```swift
-let stream = client.execPrompt(
-    prompt: "You are a helpful assistant. Reply briefly: What is 2+2?",
-    variables: nil,
-    provider: "openai",
-    model: nil
-)
-for try await event in stream {
-    if case .chunk(let data) = event { process(data) }
-}
-```
+Execution uses only **stored prompts**: call `setPrompt` first, then `exec(functionId:variables:...)` with the prompt **title** as `functionId`.
 
 ---
 
@@ -263,7 +234,7 @@ do {
 
 | Type | Description |
 |------|-------------|
-| `PromptKeeper` | Main client. Create with `init(apiKey:)`. Methods: `setKey`, `setPrompt`, `exec`, `execPrompt`. |
+| `PromptKeeper` | Main client. Create with `init(apiKey:)`. Methods: `setKey`, `setPrompt`, `exec`. |
 | `PutKeyResponse` | `versionId`, `createdAt`, `kmsKeyArn`, `fingerprint`. |
 | `PutPromptResponse` | Same shape as `PutKeyResponse`. |
 | `ExecStreamEvent` | `.chunk(String)` — one streamed data chunk. |
@@ -275,8 +246,8 @@ All of these are `Sendable` where applicable. Use from any async context (MainAc
 
 ## 9. Concurrency and lifecycle
 
-- **Async only:** `setKey`, `setPrompt`, and the `exec` / `execPrompt` streams are async; call from `async` functions or `Task`.
+- **Async only:** `setKey`, `setPrompt`, and the `exec` stream are async; call from `async` functions or `Task`.
 - **No persistence:** The SDK does not write the API key or secrets to disk. Create a new `PromptKeeper(apiKey:)` each run if the key is provided at launch.
-- **Stream cancellation:** When the consumer stops iterating the `AsyncThrowingStream` from `exec` or `execPrompt`, the underlying request is cancelled.
+- **Stream cancellation:** When the consumer stops iterating the `AsyncThrowingStream` from `exec`, the underlying request is cancelled.
 
-Use this guide to add the package, create a client, call `setKey`/`setPrompt`/`exec`/`execPrompt`, and handle `PromptKeeperError` and stream consumption in agent or app code.
+Use this guide to add the package, create a client, call `setKey`/`setPrompt`/`exec`, and handle `PromptKeeperError` and stream consumption in agent or app code.

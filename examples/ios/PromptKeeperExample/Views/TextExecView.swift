@@ -2,7 +2,7 @@
 //  TextExecView.swift
 //  PromptKeeperExample
 //
-//  Uses execPrompt (inline prompt) so you can run text generation without storing a function first.
+//  Executes a stored prompt `text` (template `{{prompt}}`) via POST /v1/execute.
 //
 
 import SwiftUI
@@ -26,11 +26,11 @@ struct TextExecView: View {
 
             Section {
                 Button {
-                    runTextExecPrompt()
+                    runStoredTextExec()
                 } label: {
                     HStack {
                         if isRunning { ProgressView().padding(.trailing, 8) }
-                        Text(isRunning ? "Running…" : "Run exec (prompt)")
+                        Text(isRunning ? "Running…" : "Run exec (stored text)")
                     }
                 }
                 .disabled(
@@ -58,18 +58,27 @@ struct TextExecView: View {
             }
         }
         .navigationTitle("Text Query")
+        .task {
+            guard execService.isConfigured else { return }
+            do {
+                try await execService.ensureTextPromptTemplate()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
     }
 
-    private func runTextExecPrompt() {
+    private func runStoredTextExec() {
         streamedText = ""
         errorMessage = nil
         isRunning = true
         Task {
             defer { Task { @MainActor in isRunning = false } }
             do {
-                try await execService.runTextExecPrompt(
-                    prompt: promptText.trimmingCharacters(in: .whitespacesAndNewlines),
-                    variables: [:],
+                try await execService.ensureTextPromptTemplate()
+                try await execService.runTextExec(
+                    functionId: "text",
+                    variables: ["prompt": promptText.trimmingCharacters(in: .whitespacesAndNewlines)],
                     provider: selectedProvider.rawValue,
                     model: selectedProvider.defaultModel
                 ) { chunk in

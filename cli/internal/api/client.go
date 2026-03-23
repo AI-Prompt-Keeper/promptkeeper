@@ -271,27 +271,13 @@ func (c *Client) Execute(functionID string, variables map[string]interface{}, pr
 	if model != "" {
 		body["model"] = model
 	}
-	return c.executeStream("/v1/execute", body, streamWriter, debugLog)
+	return c.executeStream(body, streamWriter, debugLog)
 }
 
-// ExecuteRaw runs inline/raw prompt execution with streaming. POST /v1/execute-raw.
-func (c *Client) ExecuteRaw(prompt string, variables map[string]interface{}, provider, model string, streamWriter func(data string) error, debugLog io.Writer) error {
-	body := map[string]interface{}{
-		"prompt":    prompt,
-		"provider":  provider,
-		"variables": variables,
-		"surface":   surfaceCLI,
-	}
-	if model != "" {
-		body["model"] = model
-	}
-	return c.executeStream("/v1/execute-raw", body, streamWriter, debugLog)
-}
-
-// executeStream calls an SSE execute endpoint and parses streaming chunks.
-func (c *Client) executeStream(path string, body map[string]interface{}, streamWriter func(data string) error, debugLog io.Writer) error {
+// executeStream calls POST /v1/execute (SSE) and parses streaming chunks.
+func (c *Client) executeStream(body map[string]interface{}, streamWriter func(data string) error, debugLog io.Writer) error {
 	jsonBody, _ := json.Marshal(body)
-	url := c.BaseURL + path
+	url := c.BaseURL + "/v1/execute"
 	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
 	if err != nil {
 		return err
@@ -353,7 +339,7 @@ func parseSSEStream(r io.Reader, streamWriter func(data string) error, debugLog 
 		line := scanner.Bytes()
 		if debugLog != nil && bytes.HasPrefix(line, []byte("data: ")) {
 			eventNum++
-			fmt.Fprintf(debugLog, "[debug] SSE event #%d (raw): %s\n", eventNum, string(line))
+			fmt.Fprintf(debugLog, "[debug] SSE event #%d (line): %s\n", eventNum, string(line))
 		}
 		if bytes.HasPrefix(line, []byte("data: ")) {
 			data := bytes.TrimSpace(line[6:])
@@ -369,7 +355,7 @@ func parseSSEStream(r io.Reader, streamWriter func(data string) error, debugLog 
 			var parsed map[string]interface{}
 			if err := json.Unmarshal(data, &parsed); err != nil {
 				if debugLog != nil {
-					fmt.Fprintf(debugLog, "[debug] SSE parse error: %v (raw: %s)\n", err, string(data))
+					fmt.Fprintf(debugLog, "[debug] SSE parse error: %v (data: %s)\n", err, string(data))
 				}
 				continue
 			}
@@ -420,7 +406,7 @@ func extractContent(parsed map[string]interface{}) string {
 	if c, ok := parsed["content"].(string); ok && c != "" {
 		return c
 	}
-	// Raw provider format (OpenAI/Anthropic)
+	// OpenAI-style provider JSON (choices[].delta)
 	choices, ok := parsed["choices"].([]interface{})
 	if !ok || len(choices) == 0 {
 		return ""

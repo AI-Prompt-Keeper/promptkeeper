@@ -4,6 +4,8 @@
 
 **Summary:** The SDK talks to the Prompt Keeper backend (API key storage, prompt templates, and LLM execution) at **https://api.promptkeeper.ai**. It is distributed via Maven (Maven Central or `mavenLocal()`). All network calls use Kotlin coroutines; the API key is held in memory only for the current process.
 
+**Not in scope:** Raw/inline prompt execution (`POST /v1/execute-raw`) is **not** exposed. Integrations must use **stored** prompts: `setPrompt` + `exec` (`POST /v1/execute`).
+
 ---
 
 ## 1. Requirements
@@ -209,25 +211,7 @@ viewModelScope.launch {
 
 ---
 
-## 7. Executing a raw prompt (`execPrompt`, streaming)
-
-Run a **raw text prompt** without storing a function. The SDK calls the backend `POST /v1/execute-raw`; the prompt is sent directly to the provider and nothing is stored. Same SSE streaming semantics as `exec`.
-
-**Signature:**
-
-```kotlin
-fun execPrompt(
-    prompt: String,
-    variables: Map<String, String> = emptyMap(),
-    provider: String,
-    model: String? = null
-): Flow<String>
-```
-
-Calls backend POST /v1/execute-raw. Parameters: prompt, variables (optional), provider (required), model (optional).
----
-
-## 8. Exceptions
+## 7. Exceptions
 
 All exceptions extend `PromptKeeperException` (package `ai.promptkeeper.sdk`).
 
@@ -253,7 +237,7 @@ try {
 
 ---
 
-## 9. API summary (quick reference for agents)
+## 8. API summary (quick reference for agents)
 
 | Method / API | Description |
 |--------------|-------------|
@@ -262,8 +246,7 @@ try {
 | `PromptKeeper.getInstance()` | Returns instance set by `initialize`, or null. |
 | `setKey(rawSecret, provider)` | `suspend`. POST /v1/keys. Returns `PutKeyResponse`. |
 | `setPrompt(name, rawSecret, provider?, preferredModel?)` | `suspend`. POST /v1/prompts. Returns `PutPromptResponse`. |
-| `exec(functionId, variables?, provider?, model?)` | Returns `Flow<String>`. POST /v1/execute (SSE). Stored function. |
-| `execPrompt(prompt, variables?, provider?, model?)` | Returns `Flow<String>`. POST /v1/execute-raw (SSE). Raw prompt, no stored function. |
+| `exec(functionId, variables?, provider?, model?)` | Returns `Flow<String>`. POST /v1/execute (SSE). Uses stored prompt title as `functionId`. |
 
 **Imports:**
 
@@ -276,7 +259,7 @@ import ai.promptkeeper.sdk.model.PutPromptResponse
 
 ---
 
-## 10. Backend and registration
+## 9. Backend and registration
 
 - **Base URL:** https://api.promptkeeper.ai (hardcoded in SDK).
 - **Auth:** All requests use the API key as `Authorization: Bearer <key>` and `X-API-Key: <key>`.

@@ -1,6 +1,5 @@
 package ai.promptkeeper.sdk
 
-import ai.promptkeeper.sdk.model.ExecuteRawRequest
 import ai.promptkeeper.sdk.model.ExecuteRequest
 import ai.promptkeeper.sdk.model.PutKeyRequest
 import ai.promptkeeper.sdk.model.PutKeyResponse
@@ -30,6 +29,9 @@ import java.util.concurrent.TimeUnit
  *
  * Requires an API key (obtain via registration outside this SDK). The key is kept **in-memory only**
  * for the current app run; it is not persisted.
+ *
+ * **Execution model:** only **stored** prompts are supported. Register a template with [setPrompt], then run it with
+ * [exec] (`POST /v1/execute`). This SDK does **not** expose inline/raw prompt execution (`POST /v1/execute-raw`).
  *
  * Usage:
  * ```
@@ -177,74 +179,6 @@ class PromptKeeper internal constructor(
                         emit(data)
                     }
                 }
-            }
-        }
-    }.flowOn(Dispatchers.IO)
-
-    /**
-     * Executes a **raw text prompt** without a stored function. Calls the backend `POST /v1/execute-raw`.
-     *
-     * The prompt is sent directly to the provider; nothing is stored. Same SSE streaming semantics as [exec].
-     * The backend requires [provider]; it must be non-blank.
-     *
-     * @param prompt Raw prompt text. May include Handlebars placeholders if [variables] is provided.
-     * @param variables Optional variable substitutions (Handlebars). Default: empty.
-     * @param provider Provider to use (e.g. `"openai"`, `"anthropic"`, `"gemini"`). Required.
-     * @param model Optional model override.
-     * @return Flow of SSE data chunks (provider payload strings). On server error, throws [PromptKeeperException.Server].
-     */
-    fun execPrompt(
-        prompt: String,
-        variables: Map<String, String> = emptyMap(),
-        provider: String,
-        model: String? = null
-    ): Flow<String> = flow {
-        val variablesJson = buildJsonObject {
-            variables.forEach { (k, v) -> put(k, JsonPrimitive(v)) }
-        }
-        val body = json.encodeToString(
-            ExecuteRawRequest(
-                prompt = prompt,
-                provider = provider,
-                model = model,
-                variables = variablesJson,
-                surface = SURFACE_ANDROID
-            )
-        )
-        val request = Request.Builder()
-            .url("$baseUrl/v1/execute-raw")
-            .post(body.toRequestBody(jsonMediaType))
-            .setAuth()
-            .build()
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw PromptKeeperException.Http(response.code, response.body?.bytes())
-            }
-            val bodyStream = response.body?.byteStream() ?: return@use
-            BufferedReader(InputStreamReader(bodyStream)).use { reader ->
-                var buffer = StringBuilder()
-                reader.useLines { lines ->
-                    for (line in lines) {
-                        buffer.append(line).append("\n")
-                        if (buffer.endsWith("\n\n")) {
-                            for (data in SSEParser.parse(buffer.toString())) {
-                                if (data.isEmpty()) continue
-                                val err = SSEParser.parseErrorPayload(data)
-                                if (err != null) throw PromptKeeperException.Server(err)
-                                emit(data)
-                            }
-                            buffer = StringBuilder()
-                        }
-                    }
-                }
-                if (buffer.isNotEmpty()) {
-                    for (data in SSEParser.parse(buffer.toString())) {
-                        if (data.isEmpty()) continue
-                        val err = SSEParser.parseErrorPayload(data)
-                        if (err != null) throw PromptKeeperException.Server(err)
-                        emit(data)
-                    }
-                } 
             }
         }
     }.flowOn(Dispatchers.IO)

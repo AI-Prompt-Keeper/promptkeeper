@@ -27,10 +27,16 @@ class MainViewModel : ViewModel() {
     private val _imageState = MutableStateFlow<ExecUiState>(ExecUiState.Idle)
     val imageState: StateFlow<ExecUiState> = _imageState.asStateFlow()
 
-    /** One-time setup: register image prompt (and keys) if needed. Text tab uses execPrompt (POST /v1/execute-raw), no stored function. */
+    /** One-time setup: register stored prompts (`text`, `image`) if needed. Execution uses POST /v1/execute by title. */
     fun ensureConfigured() {
         viewModelScope.launch {
             try {
+                sdk.setPrompt(
+                    name = "text",
+                    rawSecret = "{{prompt}}",
+                    provider = null,
+                    preferredModel = null
+                )
                 sdk.setPrompt(
                     name = "image",
                     rawSecret = "{{prompt}}",
@@ -43,7 +49,7 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    /** Runs execPrompt with the user's prompt as inline text (no stored function). */
+    /** Runs stored prompt `text` with variable `prompt` (POST /v1/execute). */
     fun runTextExec(prompt: String, provider: String) {
         if (prompt.isBlank()) return
         val p = provider.trim().lowercase()
@@ -52,14 +58,25 @@ class MainViewModel : ViewModel() {
             _textState.value = ExecUiState.Loading
             val sb = StringBuilder()
             try {
+                try {
+                    sdk.setPrompt(
+                        name = "text",
+                        rawSecret = "{{prompt}}",
+                        provider = null,
+                        preferredModel = null
+                    )
+                } catch (_: Exception) {
+                    // prompt may already exist
+                }
                 val model: String? = when (p) {
                     "anthropic" -> "claude-sonnet-4-6"
                     // Text-only default; avoid `*-image-*` model names so Gemini uses text streaming.
                     "gemini" -> "gemini-3-flash-preview"
                     else -> null
                 }
-                sdk.execPrompt(
-                    prompt = prompt,
+                sdk.exec(
+                    functionId = "text",
+                    variables = mapOf("prompt" to prompt),
                     provider = p,
                     model = model
                 )
