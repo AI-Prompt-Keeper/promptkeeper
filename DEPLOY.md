@@ -35,6 +35,7 @@ export PGHOST=localhost PGPORT=5432 PGPASSWORD=promptkeeper PGUSER=promptkeeper 
 psql -f schema/001_prompt_management.sql
 psql -f schema/002_auth_and_workspaces.sql
 psql -f schema/003_api_tokens.sql
+psql -f schema/004_api_tokens_scope.sql
 ```
 
 The backend requires the schema for auth (register, login), Put, and Execute (execute and put use in-memory/mock data). Applying the schema prepares the database for when you wire it in.
@@ -111,14 +112,14 @@ The server listens on **http://0.0.0.0:3000**.
 3. **Put prompt** (needs KMS + auth):
    ```bash
    curl -X POST http://localhost:3000/v1/prompts \
-     -H "Authorization: Bearer pk_..." \
+     -H "Authorization: Bearer pk_mgt_live_..." \
      -H "Content-Type: application/json" \
      -d '{"name":"my_func","raw_secret":"Hello {{name}}","provider":"openai"}'
    ```
 4. **Put key** (needs KMS + auth):
    ```bash
    curl -X POST http://localhost:3000/v1/keys \
-     -H "Authorization: Bearer pk_..." \
+     -H "Authorization: Bearer pk_mgt_live_..." \
      -H "Content-Type: application/json" \
      -d '{"raw_secret":"sk-...","provider":"openai"}'
    ```

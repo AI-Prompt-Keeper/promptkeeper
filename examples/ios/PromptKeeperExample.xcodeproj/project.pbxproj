@@ -12,8 +12,9 @@
 		A1003 /* Keys.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2003; };
 		A1004 /* StreamParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2004; };
 		A1005 /* ExecService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2005; };
-		A1006 /* TextExecView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2006; };
-		A1007 /* ImageExecView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2007; };
+		A1006 /* AddPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2006; };
+		A1007 /* ExecutePromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2007; };
+		A100C /* UserFacingError.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200C; };
 		A1008 /* PromptKeeper in Frameworks */ = {isa = PBXBuildFile; productRef = A3001; };
 		A1009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2010; };
 /* End PBXBuildFile section */
@@ -25,9 +26,10 @@
 		A2003 /* Keys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keys.swift; sourceTree = "<group>"; };
 		A2004 /* StreamParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamParser.swift; sourceTree = "<group>"; };
 		A2005 /* ExecService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecService.swift; sourceTree = "<group>"; };
-		A2006 /* TextExecView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextExecView.swift; sourceTree = "<group>"; };
-		A2007 /* ImageExecView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageExecView.swift; sourceTree = "<group>"; };
+		A2006 /* AddPromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddPromptView.swift; sourceTree = "<group>"; };
+		A2007 /* ExecutePromptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutePromptView.swift; sourceTree = "<group>"; };
 		A2008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A200C /* UserFacingError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserFacingError.swift; sourceTree = "<group>"; };
 		A2010 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -78,6 +80,7 @@
 			children = (
 				A2004 /* StreamParser.swift */,
 				A2005 /* ExecService.swift */,
+				A200C /* UserFacingError.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -85,8 +88,8 @@
 		C0005 /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				A2006 /* TextExecView.swift */,
-				A2007 /* ImageExecView.swift */,
+				A2006 /* AddPromptView.swift */,
+				A2007 /* ExecutePromptView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -164,8 +167,9 @@
 				A1003 /* Keys.swift in Sources */,
 				A1004 /* StreamParser.swift in Sources */,
 				A1005 /* ExecService.swift in Sources */,
-				A1006 /* TextExecView.swift in Sources */,
-				A1007 /* ImageExecView.swift in Sources */,
+				A100C /* UserFacingError.swift in Sources */,
+				A1006 /* AddPromptView.swift in Sources */,
+				A1007 /* ExecutePromptView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

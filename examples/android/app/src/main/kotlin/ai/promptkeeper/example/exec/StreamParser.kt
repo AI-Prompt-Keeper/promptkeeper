@@ -27,20 +27,3 @@ fun parseOpenAITextChunk(data: String): String? {
         null
     }
 }
-
-/**
- * Parses image chunk: expects JSON with "b64_json" (base64 image) or "url".
- * Returns ImageChunk or null.
- */
-fun parseImageChunk(data: String): ImageChunk? {
-    return try {
-        val obj = json.parseToJsonElement(data).jsonObject
-        val b64 = obj["b64_json"]?.jsonPrimitive?.content
-        val url = obj["url"]?.jsonPrimitive?.content
-        if (b64 != null || url != null) ImageChunk(b64 = b64, url = url) else null
-    } catch (_: Exception) {
-        null
-    }
-}
-
-data class ImageChunk(val b64: String?, val url: String?)
