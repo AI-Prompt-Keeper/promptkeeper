@@ -1,11 +1,9 @@
 package ai.promptkeeper.example
 
-import ai.promptkeeper.sdk.PromptKeeper
-import ai.promptkeeper.sdk.PromptKeeperException
-import ai.promptkeeper.example.exec.parseImageChunk
+import ai.promptkeeper.example.api.ListPromptsClient
 import ai.promptkeeper.example.exec.parseOpenAITextChunk
 import ai.promptkeeper.example.ui.ExecUiState
-import ai.promptkeeper.example.ui.ImageData
+import ai.promptkeeper.sdk.PromptKeeper
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,146 +15,140 @@ import kotlinx.coroutines.launch
 
 class MainViewModel : ViewModel() {
 
-    private val sdk: PromptKeeper by lazy {
-        PromptKeeper(apiKey = ApiKeys.PROMPTKEEPER_API_KEY)
+    private val managementSdk: PromptKeeper by lazy {
+        PromptKeeper(apiKey = ApiKeys.PROMPTKEEPER_MANAGEMENT_KEY)
     }
 
-    private val _textState = MutableStateFlow<ExecUiState>(ExecUiState.Idle)
-    val textState: StateFlow<ExecUiState> = _textState.asStateFlow()
+    private val executionSdk: PromptKeeper by lazy {
+        PromptKeeper(apiKey = ApiKeys.PROMPTKEEPER_EXECUTION_KEY)
+    }
 
-    private val _imageState = MutableStateFlow<ExecUiState>(ExecUiState.Idle)
-    val imageState: StateFlow<ExecUiState> = _imageState.asStateFlow()
+    private val _dialogMessage = MutableStateFlow<String?>(null)
+    val dialogMessage: StateFlow<String?> = _dialogMessage.asStateFlow()
 
-    /** One-time setup: register stored prompts (`text`, `image`) if needed. Execution uses POST /v1/execute by title. */
-    fun ensureConfigured() {
+    private val _promptTitles = MutableStateFlow<List<String>>(emptyList())
+    val promptTitles: StateFlow<List<String>> = _promptTitles.asStateFlow()
+
+    private val _listLoading = MutableStateFlow(false)
+    val listLoading: StateFlow<Boolean> = _listLoading.asStateFlow()
+
+    private val _executeState = MutableStateFlow<ExecUiState>(ExecUiState.Idle)
+    val executeState: StateFlow<ExecUiState> = _executeState.asStateFlow()
+
+    private val _storeLoading = MutableStateFlow(false)
+    val storeLoading: StateFlow<Boolean> = _storeLoading.asStateFlow()
+
+    fun dismissDialog() {
+        _dialogMessage.value = null
+    }
+
+    fun showMessage(message: String) {
+        _dialogMessage.value = message
+    }
+
+    /**
+     * Stores a new prompt using the **management** key (`POST /v1/prompts`).
+     */
+    fun storePrompt(title: String, text: String, provider: String) {
+        val t = title.trim()
+        val body = text.trim()
+        if (t.isEmpty() || body.isEmpty()) {
+            _dialogMessage.value = "Please enter both a prompt title and prompt text."
+            return
+        }
         viewModelScope.launch {
+            _storeLoading.value = true
             try {
-                sdk.setPrompt(
-                    name = "text",
-                    rawSecret = "{{prompt}}",
-                    provider = null,
+                managementSdk.setPrompt(
+                    name = t,
+                    rawSecret = body,
+                    provider = provider.trim().lowercase(),
                     preferredModel = null
                 )
-                sdk.setPrompt(
-                    name = "image",
-                    rawSecret = "{{prompt}}",
-                    provider = "gemini",
-                    preferredModel = "gemini-3.1-flash-image-preview"
+                _dialogMessage.value = "Prompt stored successfully. It may take a moment to appear in the list after deployment."
+            } catch (e: Exception) {
+                _dialogMessage.value = e.toUserMessage()
+            } finally {
+                _storeLoading.value = false
+            }
+        }
+
+        /*
+         * Demo: storing with an **execution** key is expected to fail with **403 Forbidden**
+         * (execution keys may only call `POST /v1/execute` and `GET /v1/list-prompts`).
+         * Uncomment the block below to verify error handling in the dialog:
+         *
+         * viewModelScope.launch {
+         *     try {
+         *         executionSdk.setPrompt(
+         *             name = t,
+         *             rawSecret = body,
+         *             provider = provider.trim().lowercase(),
+         *             preferredModel = null
+         *         )
+         *     } catch (e: Exception) {
+         *         _dialogMessage.value = e.toUserMessage()
+         *     }
+         * }
+         */
+    }
+
+    fun refreshPromptList() {
+        viewModelScope.launch {
+            _listLoading.value = true
+            try {
+                val result = ListPromptsClient.fetchTitles(ApiKeys.PROMPTKEEPER_EXECUTION_KEY)
+                result.fold(
+                    onSuccess = { _promptTitles.value = it },
+                    onFailure = { e -> _dialogMessage.value = e.toUserMessage() }
                 )
-            } catch (_: Exception) {
-                // Keys/prompts may already be set or keys are placeholders
+            } finally {
+                _listLoading.value = false
             }
         }
     }
 
-    /** Runs stored prompt `text` with variable `prompt` (POST /v1/execute). */
-    fun runTextExec(prompt: String, provider: String) {
-        if (prompt.isBlank()) return
+    /**
+     * Runs a stored prompt by title using the **execution** key (`POST /v1/execute`).
+     */
+    fun executePrompt(title: String, provider: String) {
+        val fn = title.trim()
+        if (fn.isEmpty()) return
         val p = provider.trim().lowercase()
-        if (p.isBlank()) return
         viewModelScope.launch {
-            _textState.value = ExecUiState.Loading
+            _executeState.value = ExecUiState.Loading
             val sb = StringBuilder()
             try {
-                try {
-                    sdk.setPrompt(
-                        name = "text",
-                        rawSecret = "{{prompt}}",
-                        provider = null,
-                        preferredModel = null
-                    )
-                } catch (_: Exception) {
-                    // prompt may already exist
-                }
                 val model: String? = when (p) {
                     "anthropic" -> "claude-sonnet-4-6"
-                    // Text-only default; avoid `*-image-*` model names so Gemini uses text streaming.
                     "gemini" -> "gemini-3-flash-preview"
                     else -> null
                 }
-                sdk.exec(
-                    functionId = "text",
-                    variables = mapOf("prompt" to prompt),
+                executionSdk.exec(
+                    functionId = fn,
+                    variables = emptyMap(),
                     provider = p,
                     model = model
                 )
                     .catch { e: Throwable ->
-                        _textState.update { _: ExecUiState ->
-                            ExecUiState.Error(
-                                (e as? PromptKeeperException.Server)?.message
-                                    ?: (e as? PromptKeeperException.Http)?.let { "HTTP ${it.statusCode}" }
-                                    ?: e.message ?: "Unknown error"
-                            )
-                        }
+                        _dialogMessage.value = e.toUserMessage()
+                        _executeState.value = ExecUiState.Idle
                     }
                     .collect { chunk: String ->
                         val part = parseOpenAITextChunk(chunk)
-                        if (part != null) {
-                            sb.append(part)
-                        }
-                        _textState.update { _: ExecUiState -> ExecUiState.Content(text = sb.toString()) }
+                        if (part != null) sb.append(part)
+                        _executeState.update { ExecUiState.Content(text = sb.toString()) }
                     }
             } finally {
-                if (_textState.value == ExecUiState.Loading) {
+                if (_executeState.value is ExecUiState.Loading) {
                     val finalText = sb.toString()
-                    _textState.update { ExecUiState.Content(text = finalText) }
+                    _executeState.update { ExecUiState.Content(text = finalText) }
                 }
             }
         }
     }
 
-    fun runImageExec(prompt: String) {
-        if (prompt.isBlank()) return
-        viewModelScope.launch {
-            _imageState.value = ExecUiState.Loading
-            var imageData: ImageData? = null
-            val textSb = StringBuilder()
-            try {
-                sdk.exec(
-                    functionId = "image",
-                    variables = mapOf("prompt" to prompt),
-                    provider = "gemini",
-                    model = "gemini-3.1-flash-image-preview"
-                )
-                    .catch { e ->
-                        _imageState.update {
-                            ExecUiState.Error(
-                                (e as? PromptKeeperException.Server)?.message
-                                    ?: (e as? PromptKeeperException.Http)?.let { "HTTP ${it.statusCode}" }
-                                    ?: e.message ?: "Unknown error"
-                            )
-                        }
-                    }
-                    .collect { chunk ->
-                        val img = parseImageChunk(chunk)
-                        if (img != null) {
-                            imageData = ImageData(base64 = img.b64, url = img.url)
-                        }
-                        parseOpenAITextChunk(chunk)?.let { part ->
-                            textSb.append(part)
-                        }
-                        if (img == null && textSb.isEmpty()) {
-                            // ignore unparsed chunks
-                        }
-                        _imageState.update {
-                            ExecUiState.Content(text = textSb.toString(), imageData = imageData)
-                        }
-                    }
-            } finally {
-                if (_imageState.value == ExecUiState.Loading) {
-                    _imageState.update {
-                        ExecUiState.Content(text = textSb.toString(), imageData = imageData)
-                    }
-                }
-            }
-        }
-    }
-
-    fun clearTextState() {
-        _textState.value = ExecUiState.Idle
-    }
-
-    fun clearImageState() {
-        _imageState.value = ExecUiState.Idle
+    fun clearExecuteState() {
+        _executeState.value = ExecUiState.Idle
     }
 }

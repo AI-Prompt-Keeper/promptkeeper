@@ -15,7 +15,7 @@ Example Android app that integrates the [PromptKeeper Android SDK](https://githu
 1. **Open the project**: Open the `examples/android` folder in Android Studio (or run from the repo root with `./gradlew :app:assembleDebug` if you have a Gradle wrapper at repo root).
 
 2. **API keys** (see `app/src/main/kotlin/ai/promptkeeper/example/ApiKeys.kt`):
-   - **PromptKeeper API key** (`pk_...`): Obtain via your PromptKeeper registration or CLI.
+   - **PromptKeeper API key** (`pk_mgt_live_...` or `pk_exe_live_...`): Obtain via your PromptKeeper registration or CLI.
    - **OpenAI** and **Gemini** keys: Create in the provider consoles; register them with PromptKeeper (e.g. via CLI) so the backend can use them. The app uses stub placeholders — **do not store real keys in code or commit them**; use BuildConfig, env, or a secure store in production.
 
 3. Replace the placeholders in `ApiKeys.kt` only for local testing; never commit real keys.

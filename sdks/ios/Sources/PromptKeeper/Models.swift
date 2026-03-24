@@ -7,6 +7,21 @@
 
 import Foundation
 
+// MARK: - Decoding helpers
+
+private extension KeyedDecodingContainer {
+    /// Backend returns `version_id` as JSON number (`i64`); some environments may use a string.
+    func decodeVersionIdString(forKey key: Key) throws -> String {
+        if let n = try? decode(Int64.self, forKey: key) {
+            return String(n)
+        }
+        if let n = try? decode(Int.self, forKey: key) {
+            return String(n)
+        }
+        return try decode(String.self, forKey: key)
+    }
+}
+
 // MARK: - Set key
 
 struct PutKeyRequest: Encodable {
@@ -17,7 +32,7 @@ struct PutKeyRequest: Encodable {
 
 /// Response from setKey (store provider API key).
 public struct PutKeyResponse: Decodable, Sendable {
-    /// Opaque version identifier for the stored key.
+    /// Opaque version identifier for the stored key (server sends a numeric id; exposed as string).
     public let versionId: String
     /// ISO 8601 timestamp when the key was created.
     public let createdAt: String
@@ -31,6 +46,14 @@ public struct PutKeyResponse: Decodable, Sendable {
         case createdAt = "created_at"
         case kmsKeyArn = "kms_key_arn"
         case fingerprint
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        versionId = try c.decodeVersionIdString(forKey: .versionId)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        kmsKeyArn = try c.decodeIfPresent(String.self, forKey: .kmsKeyArn)
+        fingerprint = try c.decodeIfPresent(String.self, forKey: .fingerprint)
     }
 }
 
@@ -46,7 +69,7 @@ struct PutPromptRequest: Encodable {
 
 /// Response from setPrompt (store prompt template).
 public struct PutPromptResponse: Decodable, Sendable {
-    /// Opaque version identifier for the stored prompt.
+    /// Opaque version identifier for the stored prompt (server sends a numeric id; exposed as string).
     public let versionId: String
     /// ISO 8601 timestamp when the prompt was created.
     public let createdAt: String
@@ -60,6 +83,14 @@ public struct PutPromptResponse: Decodable, Sendable {
         case createdAt = "created_at"
         case kmsKeyArn = "kms_key_arn"
         case fingerprint
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        versionId = try c.decodeVersionIdString(forKey: .versionId)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        kmsKeyArn = try c.decodeIfPresent(String.self, forKey: .kmsKeyArn)
+        fingerprint = try c.decodeIfPresent(String.self, forKey: .fingerprint)
     }
 }
 

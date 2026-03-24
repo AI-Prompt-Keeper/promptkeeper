@@ -42,6 +42,19 @@ final class PromptKeeperTests: XCTestCase {
         XCTAssertEqual(response.createdAt, "2025-01-01T00:00:00Z")
     }
 
+    /// Production API returns numeric `version_id` (Rust `i64`).
+    func testPutPromptResponseDecodingNumericVersionId() throws {
+        let json = """
+        {"version_id":42,"created_at":"2025-01-01T00:00:00Z","kms_key_arn":"arn:aws:kms:us-east-1:0:key/1","fingerprint":"abc"}
+        """
+        let data = Data(json.utf8)
+        let response = try JSONDecoder().decode(PutPromptResponse.self, from: data)
+        XCTAssertEqual(response.versionId, "42")
+        XCTAssertEqual(response.createdAt, "2025-01-01T00:00:00Z")
+        XCTAssertEqual(response.kmsKeyArn, "arn:aws:kms:us-east-1:0:key/1")
+        XCTAssertEqual(response.fingerprint, "abc")
+    }
+
     func testExecStreamEventChunk() {
         let event = ExecStreamEvent.chunk("{\"choices\":[]}")
         if case .chunk(let data) = event {
