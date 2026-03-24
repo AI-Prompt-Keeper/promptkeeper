@@ -7,6 +7,31 @@ All JSON API methods accept optional `surface` (string). If omitted, backend use
 
 ---
 
+## Authentication
+
+Protected routes accept `Authorization: Bearer <token>` or `X-API-Key: <token>`.
+
+### Prompt Keeper client API keys (`api_tokens`)
+
+These are keys **we** issue (stored hashed in `api_tokens`). They are **not** the same as LLM provider secrets submitted via `POST /v1/keys` (stored in the `api_keys` vault table).
+
+| Scope | Prefix (new keys) | Use |
+|--------|-------------------|-----|
+| **Management** (`mgt`) | `pk_mgt_live_` | CLI / automation: execute, store prompts and provider keys, mint execution keys. |
+| **Execution** (`exe`) | `pk_exe_live_` | Embed in apps: `POST /v1/execute` and `GET /v1/list-prompts`. |
+
+**Key format:** `pk_mgt_live_` or `pk_exe_live_` + 64 hexadecimal characters (32 bytes entropy) + `_` + 4 hexadecimal characters (checksum). Only these shapes are accepted for client API keys.
+
+**Registration** returns a management key plus `api_key_scope: "mgt"`. **Mint** an execution key with `POST /v1/auth/api-tokens` using a management key or a session token from login.
+
+**Restrictions:** An execution-only key receives **403 Forbidden** on mutating requests other than `POST /v1/execute` (e.g. `POST /v1/keys`, `POST /v1/prompts`, `POST /v1/auth/api-tokens`). It may call **`GET /v1/list-prompts`**. Session tokens and management keys are not subject to this restriction.
+
+### Session tokens
+
+`POST /v1/auth/login` returns a 64-character hex session token; use it like a client key for management operations.
+
+---
+
 ## Endpoints
 
 ### 1. Execute (LLM proxy with streaming)
@@ -69,11 +94,46 @@ When the request is invalid or execute fails, the response is still SSE: a singl
 
 **HTTP status:** On parse failure or timeout the stream still returns `200 OK` with an SSE stream whose first (and possibly only) event carries the `error` object. Provider or internal errors are also returned as SSE error events.
 
+**Auth:** Management or execution client key, or session token. Execution-only keys are allowed for this endpoint.
+
+---
+
+### 1b. List prompts (titles only)
+
+Returns distinct **function names** (prompt titles) that have a `production` deployment for the caller’s workspace **or** global scope (`context_id` `''`). Sorted by name. No template or provider details.
+
+| Property | Value |
+|----------|--------|
+| **Method** | `GET` |
+| **Path** | `/v1/list-prompts` |
+| **Query** | `surface` (optional; default `"unknown"`) |
+| **Response** | JSON |
+
+#### Query parameters
+
+| Name | Type | Mandatory | Description |
+|------|------|-----------|-------------|
+| `surface` | string | No | Client surface for analytics. Default: `"unknown"`. |
+
+#### Return value (success, 200)
+
+| Name | Type | Description |
+|------|------|-------------|
+| `titles` | array of string | Prompt / function names only. |
+
+**Auth:** Management or execution client key, or session token.
+
+#### Return value (error)
+
+JSON `{ "error": "..." }`. 401 (auth), 500 (database).
+
 ---
 
 ### 2a. Put key (store provider API key)
 
 Stores a provider API key (e.g. OpenAI, Anthropic, Google Gemini). Uses envelope encryption (DEK + KMS). Raw secret is never logged. Requires KMS and auth.
+
+**Auth:** Management client key or session token. Execution-only client keys receive **403**.
 
 | Property | Value |
 |----------|--------|
@@ -109,6 +169,8 @@ Stores a provider API key (e.g. OpenAI, Anthropic, Google Gemini). Uses envelope
 
 Stores a prompt template for a named function. Uses envelope encryption. Raw secret is never logged. Requires KMS and auth.
 
+**Auth:** Management client key or session token. Execution-only client keys receive **403**.
+
 | Property | Value |
 |----------|--------|
 | **Method** | `POST` |
@@ -143,13 +205,15 @@ Stores a prompt template for a named function. Uses envelope encryption. Raw sec
 
 #### Return value (error, both Put key and Put prompt)
 
-JSON body: `{ "error": "<message>" }`. 400 (validation), 401 (auth), 503 (no KMS), 502 (KMS failure), 500.
+JSON body: `{ "error": "<message>" }`. 400 (validation), 401 (auth), 403 (execution-only client key), 503 (no KMS), 502 (KMS failure), 500.
 
 ---
 
 ### 3. Register (create user)
 
 Creates a new user with email, password (Argon2id), and optional name. Email is normalized to lowercase; password must be at least 12 characters. Requires `DATABASE_URL`.
+
+**Proof-of-work:** Clients must send `X-Pow-Nonce`, `X-Pow-Solution`, and `X-Pow-Valid-Until` (see `GET /v1/auth/register-challenge` and the backend README).
 
 | Property | Value |
 |----------|--------|
@@ -186,7 +250,8 @@ Creates a new user with email, password (Argon2id), and optional name. Email is 
 | `name` | string \| null | Display name, if provided. |
 | `created_at` | string (ISO 8601) | Creation timestamp. |
 | `default_workspace_id` | UUID | Default workspace created at signup. |
-| `api_key` | string | API key for the default workspace (returned only once; store securely). |
+| `api_key` | string | **Management** client API key for the workspace (returned only once; store securely). Format: `pk_mgt_live_` + 64 hex + `_` + 4 hex checksum. |
+| `api_key_scope` | string | Always `"mgt"` for this key. |
 
 #### Return value (error)
 
@@ -200,7 +265,39 @@ JSON body: `{ "error": "<message>" }`.
 
 ---
 
-### 4. Login (create session)
+### 4. Mint execution API token (`POST /v1/auth/api-tokens`)
+
+Creates an **execution-only** client API key (`pk_exe_live_...`). Callers may use a **management** client key or a **session** token (not an execution-only key).
+
+| Property | Value |
+|----------|--------|
+| **Method** | `POST` |
+| **Path** | `/v1/auth/api-tokens` |
+| **Request body** | JSON (see below) |
+| **Response** | JSON, 201 Created |
+
+#### Request parameters (JSON body)
+
+| Name | Type | Mandatory | Description |
+|------|------|-----------|-------------|
+| `label` | string | No | Label for the token. Default: `"Execution"`. |
+| `surface` | string | No | Client-facing interface tag. Default: `"unknown"`. |
+
+#### Return value (success, 201)
+
+| Name | Type | Description |
+|------|------|-------------|
+| `api_key` | string | Execution-only key (returned only once; store securely). |
+| `scope` | string | Always `"exe"`. |
+| `label` | string | Stored label. |
+
+#### Return value (error)
+
+JSON body: `{ "error": "<message>" }`. 401 (auth), 403 (execution-only caller), 500.
+
+---
+
+### 5. Login (create session)
 
 Verifies email and password, creates a session, and returns a session token. Uses generic "invalid email or password" on any auth failure to avoid user enumeration. Requires `DATABASE_URL`.
 
@@ -265,8 +362,10 @@ JSON body: `{ "error": "invalid email or password" }` or `{ "error": "login fail
 
 | Method | Path | Request body | Response | Mandatory params |
 |--------|------|--------------|----------|------------------|
+| GET | `/v1/list-prompts` | Query: `surface`? | JSON: `titles` | — |
 | POST | `/v1/execute` | JSON: `function_id`, `variables`, `provider`? | SSE stream | `function_id` |
 | POST | `/v1/keys` | JSON: `raw_secret`, `provider` | JSON | `raw_secret`, `provider` |
 | POST | `/v1/prompts` | JSON: `name`, `raw_secret`, `provider`? | JSON | `name`, `raw_secret` |
-| POST | `/v1/auth/register` | JSON: `email`, `password`, `name`? | JSON: `user` | `email`, `password` |
+| POST | `/v1/auth/register` | JSON: `email`, `password`, `name`? | JSON: user + `api_key`, `api_key_scope` | `email`, `password` |
+| POST | `/v1/auth/api-tokens` | JSON: `label`?, `surface`? | JSON: `api_key`, `scope`, `label` | — (auth required) |
 | POST | `/v1/auth/login` | JSON: `email`, `password` | JSON: `token`, `user` | `email`, `password` |

@@ -161,6 +161,50 @@ impl AnalyticsReporter {
         );
     }
 
+    /// GET /v1/list-prompts succeeded (titles only).
+    pub fn track_prompts_listed(
+        &self,
+        surface: &str,
+        user_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
+        count: usize,
+        latency_ms: u128,
+    ) {
+        self.enqueue(
+            "prompts_listed",
+            json!({
+                "distinct_id": user_id.to_string(),
+                "surface": surface,
+                "workspace_id": workspace_id.to_string(),
+                "endpoint": "/v1/list-prompts",
+                "count": count,
+                "latency_ms": latency_ms,
+            }),
+        );
+    }
+
+    /// GET /v1/list-prompts failed after auth (e.g. DB error).
+    pub fn track_prompts_list_failed(
+        &self,
+        surface: &str,
+        user_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
+        reason: &str,
+        latency_ms: u128,
+    ) {
+        self.enqueue(
+            "prompts_list_failed",
+            json!({
+                "distinct_id": user_id.to_string(),
+                "surface": surface,
+                "workspace_id": workspace_id.to_string(),
+                "endpoint": "/v1/list-prompts",
+                "reason": reason,
+                "latency_ms": latency_ms,
+            }),
+        );
+    }
+
     /// User attempted to store a key for a provider that is not in the supported catalog.
     pub fn track_key_store_provider_not_supported(
         &self,

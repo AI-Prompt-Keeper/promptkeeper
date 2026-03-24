@@ -96,6 +96,29 @@ public final class PromptKeeper {
         return try JSONDecoder().decode(PutPromptResponse.self, from: data)
     }
 
+    // MARK: - List prompts
+
+    /// Lists stored prompt titles (function names) for the workspace (`GET /v1/list-prompts`).
+    /// Works with **management** or **execution** client API keys.
+    /// - Parameter surface: Optional analytics tag (default `"ios"`).
+    /// - Returns: Sorted prompt names that have a production deployment.
+    public func listPrompts(surface: String? = "ios") async throws -> [String] {
+        let pathURL = baseURL.appendingPathComponent("v1/list-prompts")
+        var components = URLComponents(url: pathURL, resolvingAgainstBaseURL: false)!
+        if let surface = surface {
+            components.queryItems = [URLQueryItem(name: "surface", value: surface)]
+        }
+        let url = components.url!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setAuth(apiKeyHolder.apiKey)
+
+        let (data, response) = try await session.data(for: request)
+        try Self.validateHTTP(response: response, data: data, expectedStatus: 200)
+        let decoded = try JSONDecoder().decode(ListPromptsResponse.self, from: data)
+        return decoded.titles
+    }
+
     // MARK: - Execute (streaming)
 
     /// Executes a **stored** prompt by function id (`POST /v1/execute`). The prompt must exist on the server (e.g. via `setPrompt`).

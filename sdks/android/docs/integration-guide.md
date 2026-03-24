@@ -66,10 +66,10 @@ Create a client with the Prompt Keeper API key (obtain via your backend/registra
 import ai.promptkeeper.sdk.PromptKeeper
 
 // Option A: Constructor and hold reference
-val sdk = PromptKeeper(apiKey = "pk_your_api_key")
+val sdk = PromptKeeper(apiKey = "pk_mgt_live_...")
 
 // Option B: Initialize once, use getInstance() later
-PromptKeeper.initialize(apiKey = "pk_your_api_key")
+PromptKeeper.initialize(apiKey = "pk_mgt_live_...")
 val sdk = PromptKeeper.getInstance()!!
 ```
 
@@ -263,4 +263,4 @@ import ai.promptkeeper.sdk.model.PutPromptResponse
 
 - **Base URL:** https://api.promptkeeper.ai (hardcoded in SDK).
 - **Auth:** All requests use the API key as `Authorization: Bearer <key>` and `X-API-Key: <key>`.
-- **Registration / login:** Not implemented in the SDK. The app or another service must obtain the API key (e.g. `pk_...`) and pass it into the SDK.
+- **Registration / login:** Not implemented in the SDK. The app or another service must obtain the API key (e.g. `pk_mgt_live_...` or `pk_exe_live_...`) and pass it into the SDK.

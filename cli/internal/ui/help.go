@@ -15,10 +15,12 @@ func DefaultHelp(binName string) string {
 	usages := []string{
 		Cmd.Render(binName+" register") + " [email] [password]  " + Body.Copy().MarginLeft(0).Render("Create account (interactive if args omitted)"),
 		Cmd.Render(binName+" set prke_key") + " [key]           " + Body.Copy().MarginLeft(0).Render("Store API key (interactive if omitted)"),
+		Cmd.Render(binName+" mint key") + " [label]           " + Body.Copy().MarginLeft(0).Render("Mint execution-only key pk_exe_live_... (management key required)"),
 		Cmd.Render(binName+" store") + "                      " + Body.Copy().MarginLeft(0).Render("Store a key or prompt (guided)"),
 		Cmd.Render(binName+" store key") + " [provider] [key] " + Body.Copy().MarginLeft(0).Render("Store provider API key"),
 		Cmd.Render(binName+" store prompt") + " <title> [value] " + Body.Copy().MarginLeft(0).Render("Store prompt template"),
 		Cmd.Render(binName+" exec") + " [prompt_title] ...   " + Body.Copy().MarginLeft(0).Render("Run a prompt (interactive if omitted)"),
+		Cmd.Render(binName+" list prompts") + "              " + Body.Copy().MarginLeft(0).Render("List stored prompt titles (GET /v1/list-prompts)"),
 	}
 	usageBlock := Body.Render(strings.Join(usages, "\n"))
 	flags := Subtitle.Render("Flags")

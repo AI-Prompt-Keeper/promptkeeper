@@ -2,7 +2,7 @@
 
 use axum::{
     body::Bytes,
-    extract::{Extension, FromRef, State},
+    extract::{Extension, FromRef, Query, State},
     http::{HeaderMap, StatusCode},
     middleware,
     response::sse::{Event, Sse},
@@ -22,6 +22,9 @@ use tracing::Instrument;
 
 use crate::auth::api_token::Auth;
 use crate::auth::crypto::{hash_password, verify_password};
+use crate::auth::keygen;
+use crate::auth::session::hash_token;
+use crate::auth::ApiKeyScope;
 use crate::analytics::AnalyticsReporter;
 use crate::db::DbFunctionStore;
 use crate::execute::{ExecuteState};
@@ -66,13 +69,29 @@ pub mod request {
 
 }
 
-/// In-memory rate limiter: one register per IP per window (e.g. 10 minutes).
+/// GET /v1/list-prompts query parameters.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListPromptsQuery {
+    /// Client surface tag for analytics (e.g. `"cli"`, `"android"`). Default: `"unknown"`.
+    #[serde(default = "default_surface")]
+    surface: String,
+}
+
+/// Response: stored prompt **titles** (function names) only.
+#[derive(Debug, serde::Serialize)]
+struct ListPromptsResponse {
+    /// Production deployment names for this workspace and global (`context_id` `''`), sorted.
+    titles: Vec<String>,
+}
+
+/// In-memory rate limiter: one register per IP per window (e.g. 3 minutes).
 #[derive(Default)]
 pub struct RegisterRateLimiter {
     last_by_ip: RwLock<HashMap<String, Instant>>,
 }
 
-const REGISTER_RATE_WINDOW: Duration = Duration::from_secs(10 * 60); // 10 minutes
+const REGISTER_RATE_WINDOW: Duration = Duration::from_secs(3 * 60); // 3 minutes
 
 impl RegisterRateLimiter {
     /// Returns true if the request is allowed, false if rate limited. Records the attempt when allowed.
@@ -187,7 +206,7 @@ pub struct AppState {
     pub put_service: Option<Arc<PutFunctionService>>,
     /// Shared Postgres connection pool.
     pub db: sqlx::PgPool,
-    /// Rate limiter for register: 1 IP per 10 minutes.
+    /// Rate limiter for register: 1 IP per 3 minutes.
     pub register_rate_limiter: Arc<RegisterRateLimiter>,
     /// Async analytics reporter (PostHog) with a dedicated worker thread.
     pub analytics: AnalyticsReporter,
@@ -244,8 +263,10 @@ pub async fn app_router(
         .route("/health/ready", get(health_ready_route))
         .route("/metrics", get(metrics_route))
         .route("/v1/execute", post(execute_handler))
+        .route("/v1/list-prompts", get(list_prompts_handler))
         .route("/v1/auth/register-challenge", get(register_challenge_handler))
         .route("/v1/auth/register", post(register_handler))
+        .route("/v1/auth/api-tokens", post(create_api_token_handler))
         .route("/v1/auth/login", post(login_handler))
         .route("/v1/keys", post(put_key_handler))
         .route("/v1/prompts", post(put_prompt_handler))
@@ -316,10 +337,12 @@ struct RegisterResponse {
     pub default_workspace_id: uuid::Uuid,
     /// API key for the default workspace. Returned only once; store securely.
     pub api_key: String,
+    /// Always `"mgt"`: management key (full access).
+    pub api_key_scope: &'static str,
 }
 
 /// POST /v1/auth/register: create user, default workspace, workspace_members, and API key.
-/// Rate limited: 1 request per IP per 10 minutes.
+/// Rate limited: 1 request per IP per 3 minutes.
 async fn register_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -332,7 +355,7 @@ async fn register_handler(
             return Err((
                 StatusCode::TOO_MANY_REQUESTS,
                 Json(serde_json::json!({
-                    "error": "registration rate limited: one attempt per IP per 10 minutes"
+                    "error": "registration rate limited: one attempt per IP per 3 minutes"
                 })),
             ));
         }
@@ -501,19 +524,12 @@ async fn register_handler(
         )
     })?;
 
-    // 4. Generate API key and store hash (plaintext returned once)
-    let mut token_bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut token_bytes);
-    let api_key = format!("pk_{}", hex::encode(token_bytes));
-
-    let token_hash = {
-        let mut hasher = Sha256::new();
-        hasher.update(api_key.as_bytes());
-        hex::encode(hasher.finalize())
-    };
+    // 4. Generate management API key and store hash (plaintext returned once)
+    let api_key = keygen::generate_management_key();
+    let token_hash = hash_token(&api_key);
 
     sqlx::query(
-        "INSERT INTO api_tokens (user_id, workspace_id, token_hash, label) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO api_tokens (user_id, workspace_id, token_hash, label, scope) VALUES ($1, $2, $3, $4, 'mgt')",
     )
     .bind(id)
     .bind(workspace_id)
@@ -550,6 +566,79 @@ async fn register_handler(
             created_at,
             default_workspace_id: workspace_id,
             api_key,
+            api_key_scope: "mgt",
+        }),
+    ))
+}
+
+fn default_exe_token_label() -> String {
+    "Execution".to_string()
+}
+
+/// Request body for POST /v1/auth/api-tokens (mint execution-only key).
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateApiTokenRequest {
+    /// Human-readable label (e.g. "Mobile app"). Defaults to `"Execution"`.
+    #[serde(default = "default_exe_token_label")]
+    pub label: String,
+    #[serde(default = "default_surface")]
+    pub surface: String,
+}
+
+/// Response: new execution-only API key (shown once).
+#[derive(Debug, serde::Serialize)]
+struct CreateApiTokenResponse {
+    pub api_key: String,
+    /// Always `exe` for keys created via this endpoint.
+    pub scope: &'static str,
+    pub label: String,
+}
+
+/// POST /v1/auth/api-tokens — mint an execution-only key (`pk_exe_live_...`).
+/// Requires a **management** API key or a **session** token (not an execution-only key).
+async fn create_api_token_handler(
+    State(state): State<AppState>,
+    auth: Auth,
+    Json(body): Json<CreateApiTokenRequest>,
+) -> Result<(StatusCode, Json<CreateApiTokenResponse>), (StatusCode, Json<serde_json::Value>)> {
+    if matches!(auth.api_key_scope, Some(ApiKeyScope::Exe)) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "execution-only API key cannot create tokens" })),
+        ));
+    }
+    let trimmed = body.label.trim();
+    let label = if trimmed.is_empty() {
+        default_exe_token_label()
+    } else {
+        trimmed.to_string()
+    };
+    let api_key = keygen::generate_execution_key();
+    let token_hash = hash_token(&api_key);
+    sqlx::query(
+        "INSERT INTO api_tokens (user_id, workspace_id, token_hash, label, scope) VALUES ($1, $2, $3, $4, 'exe')",
+    )
+    .bind(auth.user_id)
+    .bind(auth.workspace_id)
+    .bind(&token_hash)
+    .bind(&label)
+    .execute(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = ?e, "failed to insert execution API token");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "failed to create API token" })),
+        )
+    })?;
+    let _ = body.surface;
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateApiTokenResponse {
+            api_key,
+            scope: "exe",
+            label,
         }),
     ))
 }
@@ -682,8 +771,62 @@ async fn login_handler(
     }))
 }
 
+/// GET /v1/list-prompts — list stored prompt titles (production deployments) for the auth workspace
+/// plus global (`context_id` empty). Management or execution API key, or session token.
+async fn list_prompts_handler(
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(query): Query<ListPromptsQuery>,
+) -> Result<Json<ListPromptsResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let start = std::time::Instant::now();
+    let surface = query.surface.clone();
+    let context_id = auth.workspace_id.to_string();
+
+    let rows = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT DISTINCT f.name
+        FROM deployments d
+        JOIN functions f ON f.id = d.function_id
+        WHERE d.tag = 'production'
+          AND (d.context_id = $1 OR d.context_id = '')
+        ORDER BY f.name
+        "#,
+    )
+    .bind(&context_id)
+    .fetch_all(&state.db)
+    .await;
+
+    let titles = match rows {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = ?e, "list_prompts query failed");
+            state.analytics.track_prompts_list_failed(
+                &surface,
+                auth.user_id,
+                auth.workspace_id,
+                "db_error",
+                start.elapsed().as_millis(),
+            );
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "failed to list prompts" })),
+            ));
+        }
+    };
+
+    state.analytics.track_prompts_listed(
+        &surface,
+        auth.user_id,
+        auth.workspace_id,
+        titles.len(),
+        start.elapsed().as_millis(),
+    );
+
+    Ok(Json(ListPromptsResponse { titles }))
+}
+
 /// POST /v1/execute: parse body, run execute via LangChain, stream SSE back.
-/// Requires Authorization: Bearer <api_token> or X-API-Key: <api_token> (pk_... or session token).
+/// Requires Authorization: Bearer <api_token> or X-API-Key: <api_token> (scoped `pk_mgt_live_` / `pk_exe_live_` key or session token).
 async fn execute_handler(
     State(state): State<AppState>,
     auth: Auth,

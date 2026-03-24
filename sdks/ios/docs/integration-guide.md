@@ -48,7 +48,7 @@ Create a single client with your Prompt Keeper API key (obtain via your backend/
 ```swift
 import PromptKeeper
 
-let client = PromptKeeper(apiKey: "pk_your_api_key")
+let client = PromptKeeper(apiKey: "pk_mgt_live_...")
 ```
 
 - The API key is kept in memory for the lifetime of the `PromptKeeper` instance only.
@@ -130,7 +130,25 @@ let response = try await client.setPrompt(
 
 ---
 
-## 6. Executing a stored function (`exec`) — streaming
+## 6. Listing prompt titles (`listPrompts`)
+
+Returns the sorted list of stored function names (titles) that have a production deployment (`GET /v1/list-prompts`). Accepts **management** or **execution** client API keys.
+
+**Signature:**
+
+```swift
+func listPrompts(surface: String? = "ios") async throws -> [String]
+```
+
+**Example:**
+
+```swift
+let titles = try await client.listPrompts(surface: "ios")
+```
+
+---
+
+## 7. Executing a stored function (`exec`) — streaming
 
 Run a **stored** function by id: the server resolves the prompt template, injects variables, calls the configured LLM, and streams the response. Use this when you have already stored a prompt via `setPrompt`.
 
@@ -199,7 +217,7 @@ Execution uses only **stored prompts**: call `setPrompt` first, then `exec(funct
 
 ---
 
-## 7. Error handling
+## 8. Error handling
 
 All throwing APIs use the SDK’s error type or standard Swift errors.
 
@@ -234,9 +252,10 @@ do {
 
 | Type | Description |
 |------|-------------|
-| `PromptKeeper` | Main client. Create with `init(apiKey:)`. Methods: `setKey`, `setPrompt`, `exec`. |
+| `PromptKeeper` | Main client. Create with `init(apiKey:)`. Methods: `setKey`, `setPrompt`, `listPrompts`, `exec`. |
 | `PutKeyResponse` | `versionId`, `createdAt`, `kmsKeyArn`, `fingerprint`. |
 | `PutPromptResponse` | Same shape as `PutKeyResponse`. |
+| `ListPromptsResponse` | `titles: [String]` (decoded internally; `listPrompts` returns `[String]`). |
 | `ExecStreamEvent` | `.chunk(String)` — one streamed data chunk. |
 | `PromptKeeperError` | `httpStatus(Int, body: Data)`, `serverError(String)`; `message: String`. |
 
@@ -244,10 +263,10 @@ All of these are `Sendable` where applicable. Use from any async context (MainAc
 
 ---
 
-## 9. Concurrency and lifecycle
+## 10. Concurrency and lifecycle
 
 - **Async only:** `setKey`, `setPrompt`, and the `exec` stream are async; call from `async` functions or `Task`.
 - **No persistence:** The SDK does not write the API key or secrets to disk. Create a new `PromptKeeper(apiKey:)` each run if the key is provided at launch.
 - **Stream cancellation:** When the consumer stops iterating the `AsyncThrowingStream` from `exec`, the underlying request is cancelled.
 
-Use this guide to add the package, create a client, call `setKey`/`setPrompt`/`exec`, and handle `PromptKeeperError` and stream consumption in agent or app code.
+Use this guide to add the package, create a client, call `setKey`/`setPrompt`/`listPrompts`/`exec`, and handle `PromptKeeperError` and stream consumption in agent or app code.

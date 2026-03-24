@@ -30,6 +30,16 @@ Concise description of tested scenarios for each public API endpoint.
 
 ---
 
+## 2b. List prompts (`GET /v1/list-prompts`)
+
+| Scenario | Expected |
+|----------|----------|
+| Without auth | 401 |
+| Management or execution API key | 200, JSON `{ "titles": [ ... ] }` (strings only) |
+| Optional `?surface=cli` | 200 (analytics) |
+
+---
+
 ## 3. Put key (`POST /v1/keys`) and Put prompt (`POST /v1/prompts`)
 
 | Scenario | Expected |
@@ -42,6 +52,7 @@ Concise description of tested scenarios for each public API endpoint.
 | Prompt: missing raw_secret | 422 |
 | Key: disabled provider (test_provider_disabled) | 400, error "not enabled" or "disabled" |
 | Key: unsupported provider (test_provider_unsupported) | 400, error "not supported" |
+| Execution-only client key (`pk_exe_live_...`) | 403 (before KMS) |
 
 ---
 
@@ -60,7 +71,16 @@ Concise description of tested scenarios for each public API endpoint.
 | Name omitted | 201, name is null/absent |
 | Duplicate email | 409, `{"error": "email already registered"}` |
 
-**Response checks:** `api_key` is `pk_` + 64 hex chars; no `password` or `password_hash` in response.
+**Response checks:** `api_key` starts with `pk_mgt_live_` and includes a 4-hex checksum after `_`; `api_key_scope` is `"mgt"`; no `password` or `password_hash` in response.
+
+---
+
+## 4b. Mint execution token (`POST /v1/auth/api-tokens`)
+
+| Scenario | Expected |
+|----------|----------|
+| Valid management key or session | 201, `api_key` starts with `pk_exe_live_`, `scope` is `"exe"`, `label` set |
+| Execution-only key as Bearer | 403 |
 
 ---
 
@@ -84,4 +104,4 @@ Concise description of tested scenarios for each public API endpoint.
 |-------|----------|
 | Health, Execute, Put key, Put prompt, Register (validation), Login (validation) | None |
 | Register (happy path, duplicate, normalize, missing name), Login (happy path, wrong password) | `DATABASE_URL`, schema applied |
-| Put key (disabled/unsupported provider), Execute (provider disabled/unsupported) | `DATABASE_URL`, schema 001+004 (004 seeds test_provider_disabled) |
+| Put key (disabled/unsupported provider), Execute (provider disabled/unsupported) | `DATABASE_URL`, schema 001+002+003+004 (test providers / `api_tokens.scope`) |

@@ -1,42 +1,97 @@
-//! API token validation: Bearer pk_... → api_tokens lookup. Returns (user_id, workspace_id).
+//! API token validation: Bearer `pk_mgt_live_...` / `pk_exe_live_...` → api_tokens lookup.
 //! Also supports session tokens (login) with workspace fallback to user's first workspace.
+//!
+//! Execution-only keys (`pk_exe_live_...`, scope exe) may call `POST /v1/execute` and
+//! `GET /v1/list-prompts`; other mutating requests return 403.
 
 use axum::{
     async_trait,
     extract::{FromRef, FromRequestParts},
-    http::{header, request::Parts, StatusCode},
+    http::{header, request::Parts, Method, StatusCode},
 };
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
+use super::keygen::{
+    self, PREFIX_EXE_LIVE, PREFIX_MGT_LIVE,
+};
+use super::scope::ApiKeyScope;
 use super::session::{hash_token, validate_session_token};
 
-/// Auth context for execute and other protected endpoints. Resolves to (user_id, workspace_id).
+/// Auth context for execute and other protected endpoints.
 #[derive(Clone, Debug)]
 pub struct Auth {
     pub user_id: Uuid,
     pub workspace_id: Uuid,
+    /// `None` when authenticated with a **session** token (full access).
+    /// `Some(Mgt)` / `Some(Exe)` when authenticated with a Prompt Keeper API key.
+    pub api_key_scope: Option<ApiKeyScope>,
 }
 
-/// Validate pk_ token against api_tokens. Returns (user_id, workspace_id) if valid.
+/// True if the caller used an execution-only API key.
+pub fn is_execution_only_scope(scope: Option<ApiKeyScope>) -> bool {
+    matches!(scope, Some(ApiKeyScope::Exe))
+}
+
+/// Whether an execution-only key may perform this HTTP request.
+fn execution_key_allows_request(method: &Method, path: &str) -> bool {
+    if method == Method::POST && path == "/v1/execute" {
+        return true;
+    }
+    if method == Method::GET && path == "/v1/list-prompts" {
+        return true;
+    }
+    false
+}
+
+fn reject_execution_key(method: &Method, path: &str) -> Option<(StatusCode, axum::Json<serde_json::Value>)> {
+    if !execution_key_allows_request(method, path) {
+        Some((
+            StatusCode::FORBIDDEN,
+            axum::Json(serde_json::json!({
+                "error": "execution-only API key cannot access this endpoint"
+            })),
+        ))
+    } else {
+        None
+    }
+}
+
+/// Validate scoped client API token against api_tokens. Returns (user_id, workspace_id, scope) if valid.
 async fn validate_api_token(
     pool: &PgPool,
     token: &str,
-) -> Result<Option<(Uuid, Uuid)>, sqlx::Error> {
-    if !token.starts_with("pk_") {
+) -> Result<Option<(Uuid, Uuid, ApiKeyScope)>, sqlx::Error> {
+    if !token.starts_with(PREFIX_MGT_LIVE) && !token.starts_with(PREFIX_EXE_LIVE) {
         return Ok(None);
     }
+    if !keygen::validate_scoped_key_checksum(token) {
+        return Ok(None);
+    }
+
     let token_hash = hash_token(token);
     let row = sqlx::query(
-        "SELECT user_id, workspace_id FROM api_tokens WHERE token_hash = $1",
+        "SELECT user_id, workspace_id, scope FROM api_tokens WHERE token_hash = $1",
     )
     .bind(&token_hash)
     .fetch_optional(pool)
     .await?;
+
     Ok(row.and_then(|r| {
         let uid: Uuid = r.try_get("user_id").ok()?;
         let wid: Uuid = r.try_get("workspace_id").ok()?;
-        Some((uid, wid))
+        let scope_s: String = r.try_get("scope").ok()?;
+        let scope = ApiKeyScope::from_db(&scope_s)?;
+
+        // Consistency: token shape must match stored scope
+        if token.starts_with(PREFIX_EXE_LIVE) && scope != ApiKeyScope::Exe {
+            return None;
+        }
+        if token.starts_with(PREFIX_MGT_LIVE) && scope != ApiKeyScope::Mgt {
+            return None;
+        }
+
+        Some((uid, wid, scope))
     }))
 }
 
@@ -60,6 +115,9 @@ where
     type Rejection = (StatusCode, axum::Json<serde_json::Value>);
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let method = parts.method.clone();
+        let path = parts.uri.path().to_string();
+
         let token = parts
             .headers
             .get(header::AUTHORIZATION)
@@ -84,17 +142,23 @@ where
 
         let pool = PgPool::from_ref(state);
 
-        // Try API token first (pk_...)
-        if let Some((user_id, workspace_id)) = validate_api_token(&pool, token).await.map_err(|e| {
+        // Try client API token first (pk_mgt_live_ / pk_exe_live_)
+        if let Some((user_id, workspace_id, scope)) = validate_api_token(&pool, token).await.map_err(|e| {
             tracing::error!(error = ?e, "api token validation failed");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 axum::Json(serde_json::json!({ "error": "authentication failed" })),
             )
         })? {
+            if let Some(rejection) = reject_execution_key(&method, &path) {
+                if is_execution_only_scope(Some(scope)) {
+                    return Err(rejection);
+                }
+            }
             return Ok(Auth {
                 user_id,
                 workspace_id,
+                api_key_scope: Some(scope),
             });
         }
 
@@ -124,6 +188,7 @@ where
             return Ok(Auth {
                 user_id,
                 workspace_id,
+                api_key_scope: None,
             });
         }
 

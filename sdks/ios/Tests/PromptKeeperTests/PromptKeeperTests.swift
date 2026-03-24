@@ -22,6 +22,15 @@ final class PromptKeeperTests: XCTestCase {
         XCTAssertTrue(err2.message.contains("Unauthorized"))
     }
 
+    func testListPromptsResponseDecoding() throws {
+        let json = """
+        {"titles":["default","my_prompt"]}
+        """
+        let data = Data(json.utf8)
+        let response = try JSONDecoder().decode(ListPromptsResponse.self, from: data)
+        XCTAssertEqual(response.titles, ["default", "my_prompt"])
+    }
+
     func testPutKeyResponseDecoding() throws {
         let json = """
         {"version_id":"v1","created_at":"2025-01-01T00:00:00Z","kms_key_arn":null,"fingerprint":null}
