@@ -18,13 +18,11 @@ object ApiKeys {
      * DO NOT put management key to the app sources. Use it from CLI to store and modify prompts.
      * This app has management key for demonstration purposes only.
      */
-     @NoCommit
     const val PROMPTKEEPER_MANAGEMENT_KEY: String = "TODO_add_pk_mgt_live_..."
 
     /** 
      * Execution key are only allowed to list and execute stored prompts.
      * Use this keys in your app to limit damage scope if keys get leaked.
      */
-     @NoCommit
     const val PROMPTKEEPER_EXECUTION_KEY: String = "TODO_add_pk_exe_live_..."
 }

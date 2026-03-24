@@ -1,9 +1,11 @@
 package ai.promptkeeper.example
 
 import ai.promptkeeper.sdk.PromptKeeperException
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.parseToJsonElement
+
+private val json = Json { ignoreUnknownKeys = true }
 
 fun Throwable.toUserMessage(): String = when (this) {
     is PromptKeeperException.Server -> detailMessage
@@ -15,7 +17,7 @@ fun Throwable.toUserMessage(): String = when (this) {
 private fun formatHttp(e: PromptKeeperException.Http): String {
     val bodyStr = e.body?.toString(Charsets.UTF_8).orEmpty()
     val serverMsg = try {
-        parseToJsonElement(bodyStr).jsonObject["error"]?.jsonPrimitive?.content
+        json.parseToJsonElement(bodyStr).jsonObject["error"]?.jsonPrimitive?.content
     } catch (_: Exception) {
         null
     }

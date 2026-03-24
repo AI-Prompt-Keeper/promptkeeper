@@ -3,14 +3,13 @@ package ai.promptkeeper.example.api
 import ai.promptkeeper.sdk.PromptKeeper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.parseToJsonElement
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import java.util.concurrent.TimeUnit
 
 /**
@@ -42,7 +41,7 @@ object ListPromptsClient {
                 .addHeader("Authorization", "Bearer $apiKey")
                 .addHeader("X-API-Key", apiKey)
                 .build()
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).execute().use { response: Response ->
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
                     val err = parseErrorJson(body) ?: body.ifBlank { "HTTP ${response.code}" }
@@ -55,7 +54,7 @@ object ListPromptsClient {
 
     private fun parseErrorJson(body: String): String? {
         return try {
-            parseToJsonElement(body).jsonObject["error"]?.jsonPrimitive?.content
+            json.parseToJsonElement(body).jsonObject["error"]?.jsonPrimitive?.content
         } catch (_: Exception) {
             null
         }

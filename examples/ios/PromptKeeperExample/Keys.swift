@@ -18,8 +18,8 @@ import Foundation
 /// `setPrompt` without a separate backend. Treat it like a secret you would normally keep server-side.
 enum Keys {
     /// Management client API key (`pk_mgt_live_…`). Demo-only in-source; **do not ship in production apps.**
-    static let managementAPIKey = ""
+    static let managementAPIKey = "TODO add pk_mgt_live_..."
 
     /// Execution client API key (`pk_exe_live_…`). Intended for client-side list + execute; still avoid committing real keys.
-    static let executionAPIKey = ""
+    static let executionAPIKey = "TODO add pk_exe_live_..."
 }
