@@ -10,6 +10,7 @@ import (
 	"github.com/promptkeeper/cli/internal/api"
 	"github.com/promptkeeper/cli/internal/config"
 	"github.com/promptkeeper/cli/internal/ui"
+	"github.com/promptkeeper/cli/internal/usererr"
 	"github.com/promptkeeper/cli/internal/validate"
 	"github.com/spf13/cobra"
 )
@@ -158,7 +159,8 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 	err = client.Execute(title, variables, execProvider, execModel, streamWriter, debugOut)
 	if err != nil {
-		PrintAPIError(os.Stderr, err.Error(), "Check that the prompt exists, the backend is reachable, and the provider is configured.")
+		PrintAPIError(os.Stderr, err.Error(), usererr.MergeAPIHint(err,
+			"Check that the prompt exists, the backend is reachable, and the provider is configured."))
 	}
 	return err
 }

@@ -51,13 +51,13 @@ The API key is stored **in-memory only** for the current app process. It is not 
 import ai.promptkeeper.sdk.PromptKeeper
 
 // Option A: Initialize and keep the instance
-val sdk = PromptKeeper.initialize(apiKey = "pk_your_key_here")
+val sdk = PromptKeeper.initialize(apiKey = "pk_mgt_live_...")
 
 // Option B: Use constructor and hold reference
-val sdk = PromptKeeper(apiKey = "pk_...")
+val sdk = PromptKeeper(apiKey = "pk_mgt_live_...")
 
 // Option C: Init once, use getInstance() later
-PromptKeeper.initialize(apiKey = "pk_...")
+PromptKeeper.initialize(apiKey = "pk_mgt_live_...")
 // ... later ...
 PromptKeeper.getInstance()?.setKey(...)
 ```

@@ -36,7 +36,7 @@ The API key is kept in memory only for the current app run. It is **not** persis
 ```swift
 import PromptKeeper
 
-let sdk = PromptKeeper(apiKey: "pk_your_api_key_here")
+let sdk = PromptKeeper(apiKey: "pk_mgt_live_...")
 ```
 
 ### 2. Set key (store provider API key)

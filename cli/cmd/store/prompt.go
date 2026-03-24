@@ -123,7 +123,8 @@ func DoStorePrompt(cmd *cobra.Command, title, promptValue, provider, model strin
 		client.DebugLog = os.Stderr
 	}
 	if err := client.PutPrompt(title, promptValue, provider, model); err != nil {
-		usererr.PrintAPIError(os.Stderr, err.Error(), "Check that the provider is supported and that you are authenticated.")
+		usererr.PrintAPIError(os.Stderr, err.Error(), usererr.MergeAPIHint(err,
+			"Check that the provider is supported and that you are authenticated."))
 		return err
 	}
 	fmt.Fprintln(os.Stdout, ui.SuccessMessage("success"))

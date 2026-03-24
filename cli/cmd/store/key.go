@@ -99,7 +99,8 @@ func DoStoreKey(cmd *cobra.Command, provider, apiKey string) error {
 		client.DebugLog = os.Stderr
 	}
 	if err := client.PutKey(provider, apiKey); err != nil {
-		usererr.PrintAPIError(os.Stderr, err.Error(), "Check that the provider is supported and enabled on the backend, and that you are authenticated.")
+		usererr.PrintAPIError(os.Stderr, err.Error(), usererr.MergeAPIHint(err,
+			"Check that the provider is supported and enabled on the backend, and that you are authenticated."))
 		return err
 	}
 	fmt.Fprintln(os.Stdout, ui.SuccessMessage("success"))

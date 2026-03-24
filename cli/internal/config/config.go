@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
 	"github.com/zalando/go-keyring"
@@ -17,14 +18,15 @@ const (
 )
 
 // Config manages viper config file and optional system keyring.
-// When useLocalConfig is false, ~/.prke-config.yaml is not read or written.
+// useLocalConfig means both --debug and --use-local-config were passed; then ~/.prke-config.yaml is read/written for base_url.
+// When useLocalConfig is false, the config file is not used for base URL.
 type Config struct {
 	v              *viper.Viper
 	useLocalConfig bool
 }
 
-// New creates and initializes config. When useLocalConfig is true, reads ~/.prke-config.yaml.
-// When false, only env (PKRE_BASE_URL) and default URL are used for base URL; API key from keyring only.
+// New creates and initializes config. useLocalConfig should be true only when both --debug and --use-local-config are set.
+// When true, reads ~/.prke-config.yaml (ignore missing file). Do not set a viper default for base_url so an empty/missing file can fall through to env.
 func New(useLocalConfig bool) (*Config, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -35,7 +37,6 @@ func New(useLocalConfig bool) (*Config, error) {
 	v := viper.New()
 	v.SetConfigFile(configPath)
 	v.SetConfigType("yaml")
-	v.SetDefault(BaseURLKey, DefaultURL)
 	if useLocalConfig {
 		_ = v.ReadInConfig() // ignore if file does not exist
 	}
@@ -43,17 +44,18 @@ func New(useLocalConfig bool) (*Config, error) {
 	return &Config{v: v, useLocalConfig: useLocalConfig}, nil
 }
 
-// BaseURL returns the API base URL. When useLocalConfig is false: env PKRE_BASE_URL else default.
-// When true: env overrides, then config file, then default.
+// BaseURL resolves the API base URL:
+//   - If useLocalConfig (both --debug and --use-local-config): use base_url from ~/.prke-config.yaml when it is non-empty after trim.
+//   - Otherwise, or when that value is empty: PKRE_BASE_URL env if set, else DefaultURL.
 func (c *Config) BaseURL() string {
-	if u := os.Getenv("PKRE_BASE_URL"); u != "" {
-		return u
-	}
 	if c.useLocalConfig {
-		url := c.v.GetString(BaseURLKey)
+		url := strings.TrimSpace(c.v.GetString(BaseURLKey))
 		if url != "" {
 			return url
 		}
+	}
+	if u := strings.TrimSpace(os.Getenv("PKRE_BASE_URL")); u != "" {
+		return u
 	}
 	return DefaultURL
 }

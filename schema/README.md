@@ -7,6 +7,7 @@
 | `001_prompt_management.sql` | functions, prompt_versions, deployments (incl. context_id, envelope encryption) |
 | `002_auth_and_workspaces.sql` | users, sessions (token_hash), workspaces, api_keys (envelope), workspace_members, mfa_settings, onboarding_state |
 | `003_api_tokens.sql` | api_tokens (client auth; token_hash) |
+| `004_api_tokens_scope.sql` | api_tokens.scope (`mgt` \| `exe`) for dual-key model |
 
 ## Prompt Management (001)
 

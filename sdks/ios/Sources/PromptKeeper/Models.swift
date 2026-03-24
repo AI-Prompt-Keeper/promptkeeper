@@ -63,6 +63,14 @@ public struct PutPromptResponse: Decodable, Sendable {
     }
 }
 
+// MARK: - List prompts
+
+/// Response from `GET /v1/list-prompts`.
+public struct ListPromptsResponse: Decodable, Sendable {
+    /// Stored prompt function names (titles) available for execution.
+    public let titles: [String]
+}
+
 // MARK: - Execute
 
 struct ExecuteRequest: Encodable {

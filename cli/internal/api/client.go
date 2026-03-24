@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -18,7 +19,7 @@ type Client struct {
 	BaseURL    string
 	APIKey     string
 	HTTPClient *http.Client
-	// DebugLog: when set, request URL and response body are written here (e.g. os.Stderr for --debug).
+	// DebugLog: when set, request metadata is written here (e.g. os.Stderr for --debug). Response bodies are never logged.
 	DebugLog io.Writer
 }
 
@@ -66,7 +67,6 @@ func (c *Client) GetRegisterChallenge() (*RegisterChallenge, error) {
 	}
 	if c.DebugLog != nil {
 		fmt.Fprintf(c.DebugLog, "[debug] response status: %s\n", resp.Status)
-		fmt.Fprintf(c.DebugLog, "[debug] response body: %s\n", string(data))
 	}
 	if resp.StatusCode != http.StatusOK {
 		var result map[string]interface{}
@@ -114,12 +114,6 @@ func (c *Client) Register(email, password, name string) (map[string]interface{},
 
 	if c.DebugLog != nil {
 		fmt.Fprintf(c.DebugLog, "[debug] POST %s\n", url)
-		logBody := map[string]interface{}{"email": email, "password": "[REDACTED]", "surface": surfaceCLI}
-		if name != "" {
-			logBody["name"] = name
-		}
-		logJSON, _ := json.Marshal(logBody)
-		fmt.Fprintf(c.DebugLog, "[debug] request body: %s\n", string(logJSON))
 	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -132,11 +126,10 @@ func (c *Client) Register(email, password, name string) (map[string]interface{},
 	}
 	if c.DebugLog != nil {
 		fmt.Fprintf(c.DebugLog, "[debug] response status: %s\n", resp.Status)
-		fmt.Fprintf(c.DebugLog, "[debug] response body: %s\n", string(data))
 	}
 	var result map[string]interface{}
 	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, fmt.Errorf("invalid response: %s", string(data))
+		return nil, fmt.Errorf("invalid response: JSON parse failed")
 	}
 	if resp.StatusCode != http.StatusCreated {
 		msg := getErrorMsg(result)
@@ -155,11 +148,7 @@ func (c *Client) PutKey(provider, rawSecret string) error {
 		"provider":   provider,
 		"surface":    surfaceCLI,
 	}
-	return c.putJSON("/v1/keys", body, map[string]string{
-		"provider":   provider,
-		"raw_secret": "[REDACTED]",
-		"surface":    surfaceCLI,
-	})
+	return c.putJSON("/v1/keys", body)
 }
 
 // PutPrompt stores a prompt template. POST /v1/prompts
@@ -178,8 +167,7 @@ func (c *Client) PutPrompt(name, rawSecret, provider, model string) error {
 	return c.putPromptBody(body)
 }
 
-// putJSON sends POST with body. For debug logging, bodyForLog can be a redacted copy of body (e.g. redact raw_secret).
-func (c *Client) putJSON(path string, body interface{}, bodyForLog map[string]string) error {
+func (c *Client) putJSON(path string, body interface{}) error {
 	jsonBody, _ := json.Marshal(body)
 	url := c.BaseURL + path
 	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
@@ -189,10 +177,8 @@ func (c *Client) putJSON(path string, body interface{}, bodyForLog map[string]st
 	for k, v := range c.authHeaders() {
 		req.Header.Set(k, v)
 	}
-	if c.DebugLog != nil && bodyForLog != nil {
-		logBody, _ := json.Marshal(bodyForLog)
+	if c.DebugLog != nil {
 		fmt.Fprintf(c.DebugLog, "[debug] POST %s\n", url)
-		fmt.Fprintf(c.DebugLog, "[debug] request body: %s\n", string(logBody))
 	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -202,7 +188,6 @@ func (c *Client) putJSON(path string, body interface{}, bodyForLog map[string]st
 	data, _ := io.ReadAll(resp.Body)
 	if c.DebugLog != nil {
 		fmt.Fprintf(c.DebugLog, "[debug] response status: %s\n", resp.Status)
-		fmt.Fprintf(c.DebugLog, "[debug] response body: %s\n", string(data))
 	}
 	var result map[string]interface{}
 	_ = json.Unmarshal(data, &result)
@@ -223,17 +208,7 @@ func (c *Client) putPromptBody(body map[string]interface{}) error {
 		req.Header.Set(k, v)
 	}
 	if c.DebugLog != nil {
-		logBody := make(map[string]interface{})
-		for k, v := range body {
-			if k == "raw_secret" {
-				logBody[k] = "[REDACTED]"
-			} else {
-				logBody[k] = v
-			}
-		}
-		logJSON, _ := json.Marshal(logBody)
 		fmt.Fprintf(c.DebugLog, "[debug] POST %s\n", url)
-		fmt.Fprintf(c.DebugLog, "[debug] request body: %s\n", string(logJSON))
 	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -243,7 +218,6 @@ func (c *Client) putPromptBody(body map[string]interface{}) error {
 	data, _ := io.ReadAll(resp.Body)
 	if c.DebugLog != nil {
 		fmt.Fprintf(c.DebugLog, "[debug] response status: %s\n", resp.Status)
-		fmt.Fprintf(c.DebugLog, "[debug] response body: %s\n", string(data))
 	}
 	var result map[string]interface{}
 	_ = json.Unmarshal(data, &result)
@@ -256,6 +230,101 @@ func (c *Client) putPromptBody(body map[string]interface{}) error {
 // apiError builds an error from status and message.
 func apiError(status string, msg string) error {
 	return fmt.Errorf("%s: %s", status, msg)
+}
+
+// MintExecutionTokenResponse is the JSON body for POST /v1/auth/api-tokens (201).
+type MintExecutionTokenResponse struct {
+	APIKey string `json:"api_key"`
+	Scope  string `json:"scope"`
+	Label  string `json:"label"`
+}
+
+// MintExecutionToken creates an execution-only client API key (pk_exe_live_...). POST /v1/auth/api-tokens.
+// Requires a management API key or session token — not an execution-only key.
+func (c *Client) MintExecutionToken(label string) (*MintExecutionTokenResponse, error) {
+	body := map[string]interface{}{"surface": surfaceCLI}
+	t := strings.TrimSpace(label)
+	if t != "" {
+		body["label"] = t
+	}
+	jsonBody, _ := json.Marshal(body)
+	url := c.BaseURL + "/v1/auth/api-tokens"
+	req, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range c.authHeaders() {
+		req.Header.Set(k, v)
+	}
+	if c.DebugLog != nil {
+		fmt.Fprintf(c.DebugLog, "[debug] POST %s\n", url)
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if c.DebugLog != nil {
+		fmt.Fprintf(c.DebugLog, "[debug] response status: %s\n", resp.Status)
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("invalid response: JSON parse failed")
+	}
+	if resp.StatusCode != http.StatusCreated {
+		return nil, apiError(resp.Status, getErrorMsg(result))
+	}
+	var out MintExecutionTokenResponse
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("invalid mint response: %w", err)
+	}
+	return &out, nil
+}
+
+// ListPromptsResponse is the JSON body for GET /v1/list-prompts (200).
+type ListPromptsResponse struct {
+	Titles []string `json:"titles"`
+}
+
+// ListPrompts returns stored prompt titles (production deployments). GET /v1/list-prompts?surface=cli.
+func (c *Client) ListPrompts() (*ListPromptsResponse, error) {
+	reqURL := fmt.Sprintf("%s/v1/list-prompts?surface=%s", c.BaseURL, url.QueryEscape(surfaceCLI))
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range c.authHeaders() {
+		req.Header.Set(k, v)
+	}
+	if c.DebugLog != nil {
+		fmt.Fprintf(c.DebugLog, "[debug] GET %s\n", reqURL)
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if c.DebugLog != nil {
+		fmt.Fprintf(c.DebugLog, "[debug] response status: %s\n", resp.Status)
+	}
+	if resp.StatusCode != http.StatusOK {
+		var result map[string]interface{}
+		_ = json.Unmarshal(data, &result)
+		return nil, apiError(resp.Status, getErrorMsg(result))
+	}
+	var out ListPromptsResponse
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("invalid list-prompts response: %w", err)
+	}
+	return &out, nil
 }
 
 // Execute runs the stored-prompt execute endpoint with streaming. POST /v1/execute.
@@ -289,7 +358,6 @@ func (c *Client) executeStream(body map[string]interface{}, streamWriter func(da
 
 	if debugLog != nil {
 		fmt.Fprintf(debugLog, "[debug] POST %s\n", url)
-		fmt.Fprintf(debugLog, "[debug] body: %s\n", string(jsonBody))
 		fmt.Fprintf(debugLog, "[debug] auth: Bearer %s...\n", maskToken(c.APIKey))
 	}
 
@@ -312,7 +380,7 @@ func (c *Client) executeStream(body map[string]interface{}, streamWriter func(da
 	if resp.StatusCode != http.StatusOK {
 		data, _ := io.ReadAll(resp.Body)
 		if debugLog != nil {
-			fmt.Fprintf(debugLog, "[debug] non-200 body: %s\n", string(data))
+			fmt.Fprintf(debugLog, "[debug] non-200: %s\n", resp.Status)
 		}
 		var result map[string]interface{}
 		_ = json.Unmarshal(data, &result)
@@ -331,38 +399,25 @@ func maskToken(s string) string {
 
 // parseSSEStream reads SSE events and calls streamWriter for each data payload.
 // Extracts content from OpenAI/Anthropic-style chunks and errors.
+// Does not log response stream contents to debugLog (response bodies are never logged).
 func parseSSEStream(r io.Reader, streamWriter func(data string) error, debugLog io.Writer) error {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	eventNum := 0
 	for scanner.Scan() {
 		line := scanner.Bytes()
-		if debugLog != nil && bytes.HasPrefix(line, []byte("data: ")) {
-			eventNum++
-			fmt.Fprintf(debugLog, "[debug] SSE event #%d (line): %s\n", eventNum, string(line))
-		}
 		if bytes.HasPrefix(line, []byte("data: ")) {
 			data := bytes.TrimSpace(line[6:])
 			if len(data) == 0 {
 				continue
 			}
 			if bytes.Equal(data, []byte("[DONE]")) {
-				if debugLog != nil {
-					fmt.Fprintf(debugLog, "[debug] SSE [DONE]\n")
-				}
 				continue
 			}
 			var parsed map[string]interface{}
 			if err := json.Unmarshal(data, &parsed); err != nil {
-				if debugLog != nil {
-					fmt.Fprintf(debugLog, "[debug] SSE parse error: %v (data: %s)\n", err, string(data))
-				}
 				continue
 			}
 			if errMsg, ok := parsed["error"].(string); ok && errMsg != "" {
-				if debugLog != nil {
-					fmt.Fprintf(debugLog, "[debug] SSE error event: %s\n", errMsg)
-				}
 				if details, ok := parsed["details"].(string); ok && details != "" {
 					return fmt.Errorf("%s (details: %s)", errMsg, details)
 				}
@@ -371,34 +426,20 @@ func parseSSEStream(r io.Reader, streamWriter func(data string) error, debugLog 
 			// Extract content from provider chunks (OpenAI/Anthropic format)
 			content := extractContent(parsed)
 			if content != "" && streamWriter != nil {
-				if debugLog != nil {
-					fmt.Fprintf(debugLog, "[debug] content chunk (%d bytes) -> stdout\n", len(content))
-				}
 				if err := streamWriter(content); err != nil {
 					if debugLog != nil {
 						fmt.Fprintf(debugLog, "[debug] streamWriter error: %v\n", err)
 					}
 					return err
 				}
-			} else if debugLog != nil && len(parsed) > 0 {
-				// Log when we got a valid event but no content extracted (unknown format)
-				fmt.Fprintf(debugLog, "[debug] event with no content extracted, keys: %v\n", mapKeys(parsed))
 			}
 		}
 	}
 	err := scanner.Err()
 	if debugLog != nil {
-		fmt.Fprintf(debugLog, "[debug] scanner finished: events=%d, err=%v\n", eventNum, err)
+		fmt.Fprintf(debugLog, "[debug] SSE stream read finished: err=%v\n", err)
 	}
 	return err
-}
-
-func mapKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
 }
 
 func extractContent(parsed map[string]interface{}) string {

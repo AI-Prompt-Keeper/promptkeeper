@@ -33,7 +33,7 @@ cd backend && STATIC_DIR=../frontend cargo run
 
 **Environment:** Requires `DATABASE_URL` for auth/registration. Optional `KMS_KEY_ID` (and AWS credentials) for envelope encryption endpoints.
 
-**Schema:** Run `schema/001_prompt_management.sql`, `002_auth_and_workspaces.sql`, `003_api_tokens.sql` (in order). 001 includes functions, prompt_versions, deployments for Put/Execute.
+**Schema:** Run `schema/001_prompt_management.sql`, `002_auth_and_workspaces.sql`, `003_api_tokens.sql`, `004_api_tokens_scope.sql` (in order). 001 includes functions, prompt_versions, deployments for Put/Execute. `004` adds `scope` (`mgt` \| `exe`) to **client** API tokens (`api_tokens`).
 
 See the repo root **DEPLOY.md** for full local deployment (DB, env vars, Docker).
 
@@ -52,7 +52,7 @@ From repo root: `fly deploy` (uses `fly.toml` and `backend/Dockerfile.release`).
      fly postgres attach <postgres-app-name> --app promptkeeper
      ```
    - **Option B — External DB:** Set the secret yourself: `fly secrets set DATABASE_URL="postgres://user:pass@host:5432/dbname"`.
-   - After attaching Fly Postgres or using an external DB, run the schema migrations (e.g. from a one-off machine or locally against the same URL): `schema/001_prompt_management.sql`, `002_auth_and_workspaces.sql`, `003_api_tokens.sql`.
+   - After attaching Fly Postgres or using an external DB, run the schema migrations (e.g. from a one-off machine or locally against the same URL): `schema/001_prompt_management.sql`, `002_auth_and_workspaces.sql`, `003_api_tokens.sql`, `004_api_tokens_scope.sql`.
 3. **Other secrets (optional):** `fly secrets set KMS_KEY_ID=... AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=... AWS_REGION=...` for envelope encryption.
 4. **CI:** Pushes to `main` deploy via GitHub Actions (`.github/workflows/fly-deploy.yml`). Add repository secret `FLY_API_TOKEN` from `fly tokens create deploy -x 999999h`.
 
@@ -62,7 +62,7 @@ From repo root: `fly deploy` (uses `fly.toml` and `backend/Dockerfile.release`).
 cargo test
 ```
 
-Requires `DATABASE_URL` and the schema (users, workspaces, workspace_members, api_tokens). Tests will fail if the database is not set up.
+Requires `DATABASE_URL` and the schema (users, workspaces, workspace_members, `api_tokens` including `scope`). Tests will fail if the database is not set up.
 
 See [docs/TEST-SCENARIOS.md](docs/TEST-SCENARIOS.md) for a concise list of tested scenarios per endpoint.
 
@@ -74,6 +74,21 @@ Base URL: `http://localhost:3000` (or configured host/port).
 
 All JSON endpoints use `Content-Type: application/json` unless noted. Error responses are JSON: `{ "error": "<message>" }`.
 All JSON API methods accept optional `surface` (string). If omitted, backend uses `surface = "unknown"` for analytics.
+
+### Client API keys (Prompt Keeper tokens)
+
+Keys **we** issue to customers are stored in **`api_tokens`** (hashed at rest). This is separate from **LLM provider** secrets stored via `POST /v1/keys`, which live in the vault table **`api_keys`**.
+
+| Scope | Prefix | Access |
+|--------|--------|--------|
+| **Management** | `pk_mgt_live_` | Full: `POST /v1/execute`, `POST /v1/keys`, `POST /v1/prompts`, `POST /v1/auth/api-tokens`. |
+| **Execution** | `pk_exe_live_` | `POST /v1/execute` and **`GET /v1/list-prompts`**. Other routes → **403** (including mutating routes other than execute). |
+
+**Format:** `pk_mgt_live_` or `pk_exe_live_` + 64 hex characters (32 bytes of entropy) + `_` + 4 hex characters (checksum). Total length **81** characters. Other shapes are **rejected**.
+
+Registration returns a **management** key (`api_key`) and `api_key_scope: "mgt"`. To create an **execution** key, call `POST /v1/auth/api-tokens` with a management API key or a **session** token from login (not with an execution-only key).
+
+**Auth header:** `Authorization: Bearer <token>` or `X-API-Key: <token>`. Never log full tokens in application logs.
 
 ### Health
 
@@ -107,7 +122,7 @@ Runs the execute pipeline: resolves function config, renders the prompt with var
 | `model` | string | No | Model override. If omitted, configured/provider defaults apply (Anthropic defaults to `claude-sonnet-4-6`). |
 | `surface` | string | No | Client-facing interface tag (e.g. `"cli"`, `"android"`, `"web"`). Default: `"unknown"`. |
 
-**Auth:** Requires `Authorization: Bearer <api_token>` or `X-API-Key: <api_token>`. Use the API key returned at registration (e.g. `pk_...`) or a session token from login.
+**Auth:** Requires `Authorization: Bearer <token>` or `X-API-Key: <token>`. Accepts a **management** client key, an **execution** client key, or a **session** token from login.
 
 **Example request:**
 ```json
@@ -132,11 +147,34 @@ Common errors: parse failure, function not found, provider error, timeout (`"exe
 
 ---
 
+### 1b. List prompts — titles only
+
+Returns the sorted list of **function names** (prompt titles) that have a **production** deployment for your workspace **or** global scope (`context_id` empty). No template text or metadata.
+
+| Property | Value |
+|----------|--------|
+| **Method** | `GET` |
+| **Path** | `/v1/list-prompts` |
+| **Query** | Optional `surface` (default `"unknown"`). |
+| **Response** | JSON `200` |
+
+**Auth:** **Management** or **execution** client key, or **session** token.
+
+**Success response (200):**
+
+```json
+{ "titles": ["default", "my_prompt"] }
+```
+
+**Error responses:** `401` (missing/invalid auth), `500` (database failure).
+
+---
+
 ### 2a. Put key — store provider API key
 
 Stores a provider API key (e.g. OpenAI, Anthropic, Google Gemini). Uses envelope encryption (DEK + KMS). Raw secret is never logged. Requires KMS and auth.
 
-**Auth:** Requires `Authorization: Bearer <api_token>` or `X-API-Key: <api_token>`.
+**Auth:** Requires a **management** client API key or a **session** token. **Execution-only** keys (`pk_exe_live_...`) receive **403 Forbidden**.
 
 | Property | Value |
 |----------|--------|
@@ -169,7 +207,7 @@ Stores a provider API key (e.g. OpenAI, Anthropic, Google Gemini). Uses envelope
 
 Stores a prompt template for a named function. Uses envelope encryption. Raw secret is never logged. Requires KMS and auth.
 
-**Auth:** Requires `Authorization: Bearer <api_token>` or `X-API-Key: <api_token>`.
+**Auth:** Requires a **management** client API key or a **session** token. **Execution-only** keys receive **403 Forbidden**.
 
 | Property | Value |
 |----------|--------|
@@ -250,7 +288,8 @@ Creates a new user with email and password. Also creates a default workspace, ad
 | `name` | string \| null | Display name, if provided. |
 | `created_at` | string (ISO 8601) | Creation timestamp. |
 | `default_workspace_id` | UUID | Default workspace created at signup. |
-| `api_key` | string | API key for the default workspace. **Returned only once**; store securely. Format: `pk_` + 64 hex chars. |
+| `api_key` | string | **Management** API key for the default workspace. **Returned only once**; store securely. Format: `pk_mgt_live_` + 64 hex + `_` + 4 hex checksum (see **Client API keys** above). |
+| `api_key_scope` | string | Always `"mgt"` for this key. |
 
 **Error responses:**
 
@@ -259,6 +298,38 @@ Creates a new user with email and password. Also creates a default workspace, ad
 | 400 Bad Request | Missing or invalid proof-of-work; invalid email or password too short; challenge expired. |
 | 409 Conflict | Email already registered. |
 | 500 Internal Server Error | Hashing, DB, or transaction failure. |
+
+---
+
+### 4. Mint execution API key
+
+Creates an additional **execution-only** client API key (`pk_exe_live_...`, scope `exe`). Use in application code; it cannot create prompts, store provider keys, or mint further tokens.
+
+| Property | Value |
+|----------|--------|
+| **Method** | `POST` |
+| **Path** | `/v1/auth/api-tokens` |
+| **Request** | JSON body |
+| **Response** | JSON, 201 Created |
+
+**Auth:** **Management** client API key or **session** token. Execution-only keys receive **403**.
+
+**Request body (JSON):**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `label` | string | No | Label for this token (e.g. `"iOS app"`). Default: `"Execution"`. |
+| `surface` | string | No | Client-facing interface tag. Default: `"unknown"`. |
+
+**Success response (201):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `api_key` | string | Execution-only key. **Returned only once**; store securely. |
+| `scope` | string | Always `"exe"`. |
+| `label` | string | Label stored with the token. |
+
+**Error responses:** 401 (missing/invalid auth), 403 (caller used an execution-only key), 500.
 
 ---
 
@@ -324,12 +395,14 @@ Verifies email and password, creates a session, and returns a session token. Use
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/health` | — | Health check |
-| POST | `/v1/execute` | API key | Run stored prompt by `function_id`, stream LLM response |
-| POST | `/v1/keys` | API key | Store provider API key (KMS required) |
-| POST | `/v1/prompts` | API key | Store prompt template (KMS required) |
-| POST | `/v1/auth/register` | — | Create user, workspace, and API key |
+| GET | `/v1/list-prompts` | Client key or session | List stored prompt **titles** (production deployments) |
+| POST | `/v1/execute` | Client key or session | Run stored prompt by `function_id`, stream LLM response |
+| POST | `/v1/keys` | Management key or session | Store **provider** API key in vault (KMS required) |
+| POST | `/v1/prompts` | Management key or session | Store prompt template (KMS required) |
+| POST | `/v1/auth/register` | — | Create user, workspace, and **management** client API key |
+| POST | `/v1/auth/api-tokens` | Management key or session | Mint **execution-only** client API key |
 | POST | `/v1/auth/login` | — | Create session token |
 
-**Note:** Execute and Put are gated by auth. Execute requires a stored prompt (POST /v1/prompts) and a stored key for the provider (POST /v1/keys). Keys → `api_keys`; Prompts → `prompt_versions` + deployments.
+**Note:** Execute and Put are gated by auth. Execute requires a stored prompt (`POST /v1/prompts`) and a stored **provider** key (`POST /v1/keys`). Provider secrets → table **`api_keys`**; Prompts → `prompt_versions` + deployments. **Client** keys (management / execution) → **`api_tokens`**.
 
 For full request/response schemas and examples, see **backend-specs.md**.

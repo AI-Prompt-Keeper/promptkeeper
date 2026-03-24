@@ -35,7 +35,7 @@ import java.util.concurrent.TimeUnit
  *
  * Usage:
  * ```
- * val sdk = PromptKeeper(apiKey = "pk_...")
+ * val sdk = PromptKeeper(apiKey = "pk_mgt_live_...")
  * sdk.setKey(rawSecret = "sk-...", provider = "openai")
  * sdk.setPrompt(name = "default", rawSecret = "Hello {{name}}!", provider = "openai")
  * sdk.exec(functionId = "default", variables = mapOf("name" to "Alice")).collect { chunk -> ... }
@@ -209,7 +209,7 @@ class PromptKeeper internal constructor(
         /**
          * Initializes the SDK with an API key (the "init" step). Key is kept in-memory only for the current app run.
          * Use [getInstance] for consecutive API calls, or keep the returned instance.
-         * @param apiKey API key (e.g. `pk_...`) obtained via registration outside this SDK.
+         * @param apiKey API key (`pk_mgt_live_...` or `pk_exe_live_...`) obtained via registration outside this SDK.
          * @return The initialized [PromptKeeper] instance.
          */
         @JvmStatic

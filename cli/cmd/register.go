@@ -16,7 +16,7 @@ import (
 var registerCmd = &cobra.Command{
 	Use:   "register [email] [password]",
 	Short: "Register a new user",
-	Long:  "Registers a new user with the Secure AI Gateway. On success, stores the API key in the system vault. You must store the API key somewhere secure—it is returned only once. If email or password are omitted, an interactive form will guide you.",
+	Long:  "Registers a new user with the Secure AI Gateway. On success, stores the management API key (pk_mgt_live_...) in the system vault. You must persist it somewhere secure—it is returned only once. If email or password are omitted, an interactive form will guide you.",
 	Args: cobra.MaximumNArgs(2),
 	RunE: runRegister,
 }
@@ -89,7 +89,7 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Pretty-print response
+	// Pretty-print response once (full JSON including api_key on stdout; not duplicated in API debug logs)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(resp); err != nil {

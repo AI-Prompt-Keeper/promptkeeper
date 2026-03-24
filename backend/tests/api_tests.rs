@@ -7,6 +7,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use metrics_exporter_prometheus::PrometheusHandle;
+use promptkeeper::auth::keygen::validate_scoped_key_checksum;
 use promptkeeper::routes::app_router;
 use serde_json::json;
 use std::sync::OnceLock;
@@ -845,10 +846,212 @@ async fn register_happy_path_returns_201_and_user() {
     assert!(parsed.get("default_workspace_id").is_some());
 
     let api_key = parsed.get("api_key").and_then(|v| v.as_str()).expect("api_key must be present");
-    assert!(api_key.starts_with("pk_"), "api_key must have pk_ prefix");
-    let suffix = &api_key[3..];
-    assert_eq!(suffix.len(), 64, "api_key must be pk_ + 64 hex chars");
-    assert!(suffix.chars().all(|c| c.is_ascii_hexdigit()), "api_key suffix must be hex: {}", suffix);
+    assert!(
+        api_key.starts_with("pk_mgt_live_"),
+        "registration must return a management API key"
+    );
+    assert!(
+        validate_scoped_key_checksum(api_key),
+        "api_key must pass structural checksum validation"
+    );
+    assert_eq!(
+        parsed.get("api_key_scope").and_then(|v| v.as_str()),
+        Some("mgt")
+    );
+}
+
+#[tokio::test]
+async fn mint_execution_api_token_returns_pk_exe_scope() {
+    let (app, mgt_key) = test_app_with_api_key().await;
+    let mint_res = app
+        .oneshot(
+            Request::post("/v1/auth/api-tokens")
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"label":"my-app"}"#.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mint_res.status(), StatusCode::CREATED);
+    let mint_body = body_string(mint_res.into_body()).await;
+    let v: serde_json::Value = serde_json::from_str(&mint_body).unwrap();
+    let api_key = v.get("api_key").and_then(|x| x.as_str()).unwrap();
+    assert!(api_key.starts_with("pk_exe_live_"));
+    assert!(validate_scoped_key_checksum(api_key));
+    assert_eq!(v.get("scope").and_then(|x| x.as_str()), Some("exe"));
+}
+
+#[tokio::test]
+async fn execution_api_key_forbidden_post_prompts() {
+    let (app, mgt_key) = test_app_with_api_key().await;
+    let mint_res = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/auth/api-tokens")
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"label":"exe-test"}"#.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mint_res.status(), StatusCode::CREATED);
+    let mint_body = body_string(mint_res.into_body()).await;
+    let v: serde_json::Value = serde_json::from_str(&mint_body).unwrap();
+    let exe_key = v.get("api_key").and_then(|x| x.as_str()).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::post("/v1/prompts")
+                .header("Authorization", format!("Bearer {}", exe_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"t","raw_secret":"{{x}}","provider":"openai"}"#.to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "execution-only key must not POST /v1/prompts"
+    );
+}
+
+#[tokio::test]
+async fn execute_accepts_execution_only_api_key() {
+    let (app, mgt_key) = test_app_with_api_key().await;
+    let mint_res = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/auth/api-tokens")
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"label":"exe"}"#.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mint_res.status(), StatusCode::CREATED);
+    let mint_body = body_string(mint_res.into_body()).await;
+    let v: serde_json::Value = serde_json::from_str(&mint_body).unwrap();
+    let exe_key = v.get("api_key").and_then(|x| x.as_str()).unwrap().to_string();
+
+    let body = json!({
+        "function_id": "default",
+        "variables": { "name": "Alice", "query": "What is 2+2?" },
+        "provider": "anthropic"
+    });
+    let response = app
+        .oneshot(
+            Request::post("/v1/execute")
+                .header("Authorization", format!("Bearer {}", exe_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn list_prompts_without_auth_returns_401() {
+    let app = test_app_no_kms().await;
+    let res = app
+        .oneshot(Request::get("/v1/list-prompts").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn list_prompts_returns_titles_json_with_management_key() {
+    let (app, api_key) = test_app_with_api_key().await;
+    let res = app
+        .oneshot(
+            Request::get("/v1/list-prompts?surface=cli")
+                .header("Authorization", format!("Bearer {}", api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = body_string(res.into_body()).await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let titles = v.get("titles").and_then(|t| t.as_array()).expect("titles array");
+    for t in titles {
+        assert!(t.as_str().is_some(), "title must be string");
+    }
+}
+
+#[tokio::test]
+async fn list_prompts_allows_execution_only_key() {
+    let (app, mgt_key) = test_app_with_api_key().await;
+    let mint_res = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/auth/api-tokens")
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"label":"list-exe"}"#.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mint_res.status(), StatusCode::CREATED);
+    let mint_body = body_string(mint_res.into_body()).await;
+    let v: serde_json::Value = serde_json::from_str(&mint_body).unwrap();
+    let exe_key = v.get("api_key").and_then(|x| x.as_str()).unwrap();
+
+    let res = app
+        .oneshot(
+            Request::get("/v1/list-prompts")
+                .header("Authorization", format!("Bearer {}", exe_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body = body_string(res.into_body()).await;
+    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert!(parsed.get("titles").and_then(|t| t.as_array()).is_some());
+}
+
+#[tokio::test]
+async fn execution_api_key_cannot_mint_tokens() {
+    let (app, mgt_key) = test_app_with_api_key().await;
+    let mint_res = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/auth/api-tokens")
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"label":"child"}"#.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mint_res.status(), StatusCode::CREATED);
+    let mint_body = body_string(mint_res.into_body()).await;
+    let v: serde_json::Value = serde_json::from_str(&mint_body).unwrap();
+    let exe_key = v.get("api_key").and_then(|x| x.as_str()).unwrap();
+
+    let blocked = app
+        .oneshot(
+            Request::post("/v1/auth/api-tokens")
+                .header("Authorization", format!("Bearer {}", exe_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"label":"nope"}"#.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(blocked.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
