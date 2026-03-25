@@ -6,6 +6,7 @@
 use promptkeeper::observability::init_observability;
 use promptkeeper::routes::app_router;
 use promptkeeper::secrets::SecretEnveloper;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -56,7 +57,11 @@ async fn main() -> anyhow::Result<()> {
         .await?
         .fallback_service(ServeDir::new(static_dir));
 
-    axum::serve(listener, app.into_make_service()).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
