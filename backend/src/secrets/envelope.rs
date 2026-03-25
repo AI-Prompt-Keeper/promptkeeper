@@ -9,7 +9,7 @@ use aws_sdk_kms::Client as KmsClient;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 const DEK_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
@@ -148,15 +148,17 @@ impl SecretEnveloper {
                 EnvelopeError::KmsDecrypt(e)
             })?;
 
-        let dek_bytes = decrypt_output
+        let mut dek_bytes = decrypt_output
             .plaintext()
             .map(|b| b.as_ref().to_vec())
             .ok_or(EnvelopeError::DecryptionFailed)?;
         if dek_bytes.len() != DEK_LEN {
+            dek_bytes.zeroize();
             return Err(EnvelopeError::KeyLength);
         }
         let mut dek_arr = [0u8; DEK_LEN];
         dek_arr.copy_from_slice(&dek_bytes);
+        dek_bytes.zeroize();
         let dek = Zeroizing::new(dek_arr);
 
         // 2. Decrypt payload with DEK and same AAD

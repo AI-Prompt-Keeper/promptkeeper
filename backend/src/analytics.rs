@@ -81,26 +81,29 @@ impl AnalyticsReporter {
         );
     }
 
+    /// Third-party-safe: `error_code` and optional `provider` only — never raw upstream messages.
     pub fn track_proxy_error(
         &self,
         endpoint: &str,
         surface: &str,
         user_id: uuid::Uuid,
         workspace_id: uuid::Uuid,
-        error: &str,
+        error_code: &str,
+        provider: Option<&str>,
         latency_ms: u128,
     ) {
-        self.enqueue(
-            "proxy_error",
-            json!({
-                "distinct_id": user_id.to_string(),
-                "endpoint": endpoint,
-                "surface": surface,
-                "workspace_id": workspace_id.to_string(),
-                "error": error,
-                "latency_ms": latency_ms,
-            }),
-        );
+        let mut props = json!({
+            "distinct_id": user_id.to_string(),
+            "endpoint": endpoint,
+            "surface": surface,
+            "workspace_id": workspace_id.to_string(),
+            "error_code": error_code,
+            "latency_ms": latency_ms,
+        });
+        if let Some(p) = provider.filter(|s| !s.is_empty()) {
+            props["provider"] = json!(p);
+        }
+        self.enqueue("proxy_error", props);
     }
 
     pub fn track_added_latency(

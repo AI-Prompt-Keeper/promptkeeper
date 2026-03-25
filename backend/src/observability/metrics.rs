@@ -71,9 +71,13 @@ pub fn classify_provider_error_type(message: &str) -> &'static str {
 /// Map [`ExecuteError`] to provider + error_type for metrics (non-provider errors return None).
 pub fn provider_error_for_execute(err: &ExecuteError) -> Option<(&str, &'static str)> {
     match err {
-        ExecuteError::ProviderError { provider, message, .. } => {
-            Some((provider.as_str(), classify_provider_error_type(message)))
-        }
+        ExecuteError::ProviderError {
+            provider,
+            internal_message,
+        } => Some((
+            provider.as_str(),
+            classify_provider_error_type(internal_message),
+        )),
         _ => None,
     }
 }

@@ -71,11 +71,11 @@ pub enum ExecuteError {
     NoEnveloper,
     #[error("render: {0}")]
     Render(String),
-    #[error("provider {provider} error: {message}")]
+    /// Upstream LLM provider failure. `internal_message` is for metrics/logs only — never shown to clients.
+    #[error("upstream provider error ({provider})")]
     ProviderError {
         provider: String,
-        message: String,
-        details: Option<String>,
+        internal_message: String,
     },
     #[error("provider '{0}' is not supported")]
     UnsupportedProvider(String),
@@ -84,6 +84,27 @@ pub enum ExecuteError {
     ProviderDisabled(String),
     #[error("{0}")]
     Other(String),
+}
+
+fn provider_failure(provider: impl Into<String>, internal_message: String) -> ExecuteError {
+    ExecuteError::ProviderError {
+        provider: provider.into(),
+        internal_message,
+    }
+}
+
+/// Stable labels for analytics (no raw upstream errors or internal diagnostics).
+pub fn execute_error_analytics_labels(err: &ExecuteError) -> (&'static str, Option<&str>) {
+    match err {
+        ExecuteError::FunctionNotFound(_) => ("function_not_found", None),
+        ExecuteError::NoProviderKey { provider } => ("no_provider_key", Some(provider.as_str())),
+        ExecuteError::NoEnveloper => ("no_enveloper", None),
+        ExecuteError::Render(_) => ("render", None),
+        ExecuteError::ProviderError { provider, .. } => ("provider_error", Some(provider.as_str())),
+        ExecuteError::UnsupportedProvider(_) => ("unsupported_provider", None),
+        ExecuteError::ProviderDisabled(_) => ("provider_disabled", None),
+        ExecuteError::Other(_) => ("other", None),
+    }
 }
 
 /// Resolve provider: request's provider if non-empty, else prompt's primary_provider.
@@ -217,12 +238,8 @@ pub async fn execute_with_provider(
                     openai = openai.with_model(m.clone());
                 }
                 let s = openai.stream(&messages).await.map_err(|e| {
-                    let msg = e.to_string();
-                    ExecuteError::ProviderError {
-                        provider: provider.clone(),
-                        message: msg,
-                        details: Some(format!("{:?}", e)),
-                    }
+                    tracing::warn!(provider = %provider, error = %e, "openai stream setup failed");
+                    provider_failure(&provider, e.to_string())
                 })?;
                 let p = provider.clone();
                 Box::pin(s.map(move |r| {
@@ -230,10 +247,9 @@ pub async fn execute_with_provider(
                         content: d.content,
                         image_base64: None,
                     })
-                    .map_err(|e| ExecuteError::ProviderError {
-                        provider: p.clone(),
-                        message: e.to_string(),
-                        details: Some(format!("{:?}", e)),
+                    .map_err(|e| {
+                        tracing::warn!(provider = %p, error = %e, "openai stream chunk failed");
+                        provider_failure(&p, e.to_string())
                     })
                 }))
             }
@@ -243,12 +259,8 @@ pub async fn execute_with_provider(
                     claude = claude.with_model(m.clone());
                 }
                 let s = claude.stream(&messages).await.map_err(|e| {
-                    let msg = e.to_string();
-                    ExecuteError::ProviderError {
-                        provider: provider.clone(),
-                        message: msg,
-                        details: Some(format!("{:?}", e)),
-                    }
+                    tracing::warn!(provider = %provider, error = %e, "anthropic stream setup failed");
+                    provider_failure(&provider, e.to_string())
                 })?;
                 let p = provider.clone();
                 Box::pin(s.map(move |r| {
@@ -256,10 +268,9 @@ pub async fn execute_with_provider(
                         content: d.content,
                         image_base64: None,
                     })
-                    .map_err(|e| ExecuteError::ProviderError {
-                        provider: p.clone(),
-                        message: e.to_string(),
-                        details: Some(format!("{:?}", e)),
+                    .map_err(|e| {
+                        tracing::warn!(provider = %p, error = %e, "anthropic stream chunk failed");
+                        provider_failure(&p, e.to_string())
                     })
                 }))
             }
@@ -315,7 +326,6 @@ pub async fn execute_with_provider(
             Err(e) => {
                 let ev = serde_json::json!({
                     "error": e.to_string(),
-                    "details": format!("{:?}", e),
                     "provider": provider_owned
                 });
                 Event::default()
@@ -326,6 +336,21 @@ pub async fn execute_with_provider(
     });
 
     Ok(Box::pin(s))
+}
+
+/// Allowed characters for Gemini model IDs in URL path segments (avoid path injection / SSRF-style confusion).
+fn validate_gemini_model_id(model: &str) -> Result<(), ExecuteError> {
+    let m = model.trim();
+    if m.is_empty() || m.len() > 128 {
+        return Err(ExecuteError::Other("invalid model".into()));
+    }
+    if !m
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+    {
+        return Err(ExecuteError::Other("invalid model".into()));
+    }
+    Ok(())
 }
 
 /// True if the model is a Gemini image-generation model (e.g. gemini-2.5-flash-image, gemini-3.1-flash-image-preview).
@@ -348,6 +373,7 @@ fn generate_gemini_image(
     Pin<Box<dyn Stream<Item = Result<StreamChunk, ExecuteError>> + Send>>,
     ExecuteError,
 > {
+    validate_gemini_model_id(model)?;
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
         model
@@ -373,32 +399,26 @@ fn generate_gemini_image(
         let resp = match req.send().await {
             Ok(r) => r,
             Err(e) => {
-                yield Err(ExecuteError::ProviderError {
-                    provider: provider_owned.clone(),
-                    message: e.to_string(),
-                    details: None,
-                });
+                tracing::warn!(provider = %provider_owned, error = %e, "gemini image request failed");
+                yield Err(provider_failure(&provider_owned, e.to_string()));
                 return;
             }
         };
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            yield Err(ExecuteError::ProviderError {
-                provider: provider_owned.clone(),
-                message: format!("{}: {}", status, body),
-                details: None,
-            });
+            tracing::warn!(provider = %provider_owned, status = %status, "gemini image non-success");
+            yield Err(provider_failure(
+                &provider_owned,
+                format!("{}: {}", status, body),
+            ));
             return;
         }
         let json: serde_json::Value = match resp.json().await {
             Ok(v) => v,
             Err(e) => {
-                yield Err(ExecuteError::ProviderError {
-                    provider: provider_owned.clone(),
-                    message: e.to_string(),
-                    details: None,
-                });
+                tracing::warn!(provider = %provider_owned, error = %e, "gemini image json parse failed");
+                yield Err(provider_failure(&provider_owned, e.to_string()));
                 return;
             }
         };
@@ -445,6 +465,7 @@ fn stream_gemini(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("gemini-2.0-flash");
+    validate_gemini_model_id(model)?;
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse",
         model
@@ -469,22 +490,19 @@ fn stream_gemini(
         let resp = match req.send().await {
             Ok(r) => r,
             Err(e) => {
-                yield Err(ExecuteError::ProviderError {
-                    provider: provider_owned.clone(),
-                    message: e.to_string(),
-                    details: None,
-                });
+                tracing::warn!(provider = %provider_owned, error = %e, "gemini stream request failed");
+                yield Err(provider_failure(&provider_owned, e.to_string()));
                 return;
             }
         };
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            yield Err(ExecuteError::ProviderError {
-                provider: provider_owned.clone(),
-                message: format!("{}: {}", status, body),
-                details: None,
-            });
+            tracing::warn!(provider = %provider_owned, status = %status, "gemini stream non-success");
+            yield Err(provider_failure(
+                &provider_owned,
+                format!("{}: {}", status, body),
+            ));
             return;
         }
         let mut bytes_stream = resp.bytes_stream();
@@ -494,11 +512,8 @@ fn stream_gemini(
             let chunk = match chunk {
                 Ok(c) => c,
                 Err(e) => {
-                    yield Err(ExecuteError::ProviderError {
-                        provider: provider_owned.clone(),
-                        message: e.to_string(),
-                        details: None,
-                    });
+                    tracing::warn!(provider = %provider_owned, error = %e, "gemini stream read failed");
+                    yield Err(provider_failure(&provider_owned, e.to_string()));
                     return;
                 }
             };
@@ -598,21 +613,9 @@ pub async fn execute_request(
     })
 }
 
-/// Helper to convert ExecuteError into a single SSE event for error response.
-/// Returns event with "error" and "details" so our response is an error.
+/// Helper to convert ExecuteError into a single SSE event for error response (no internal diagnostics).
 pub fn execute_error_to_event(err: &ExecuteError) -> Event {
-    let (error, details) = match err {
-        ExecuteError::ProviderError {
-            provider: _,
-            message,
-            details: d,
-        } => (message.clone(), d.clone()),
-        _ => (err.to_string(), None),
-    };
-    let payload = serde_json::json!({
-        "error": error,
-        "details": details
-    });
+    let payload = serde_json::json!({ "error": err.to_string() });
     Event::default()
         .json_data(payload)
         .unwrap_or_else(|_| Event::default().data("{\"error\":\"internal\"}"))

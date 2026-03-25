@@ -2,7 +2,7 @@
 
 use axum::{
     body::Bytes,
-    extract::{Extension, FromRef, Query, State},
+    extract::{ConnectInfo, Extension, FromRef, Query, State},
     http::{HeaderMap, StatusCode},
     middleware,
     response::sse::{Event, Sse},
@@ -10,6 +10,7 @@ use axum::{
     Json, Router,
 };
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
@@ -175,7 +176,7 @@ async fn register_challenge_handler() -> Json<RegisterChallengeResponse> {
     })
 }
 
-/// Client IP from X-Forwarded-For (first client) or X-Real-IP. None if neither is present (request is not rate limited).
+/// Client IP from X-Forwarded-For (first client) or X-Real-IP.
 fn client_ip_from_headers(headers: &HeaderMap) -> Option<String> {
     if let Some(v) = headers.get("x-forwarded-for") {
         if let Ok(s) = v.to_str() {
@@ -194,6 +195,22 @@ fn client_ip_from_headers(headers: &HeaderMap) -> Option<String> {
         }
     }
     None
+}
+
+/// IP key for registration rate limiting. Public peers cannot spoof `X-Forwarded-For`; private/LB peers use forwarded IP.
+fn client_ip_for_rate_limit(peer: SocketAddr, headers: &HeaderMap) -> String {
+    if peer.ip().is_loopback() {
+        return peer.ip().to_string();
+    }
+    let trust_forwarded = match peer.ip() {
+        IpAddr::V4(v4) => v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => v6.is_unique_local(),
+    };
+    if trust_forwarded {
+        client_ip_from_headers(headers).unwrap_or_else(|| peer.ip().to_string())
+    } else {
+        peer.ip().to_string()
+    }
 }
 
 /// Application state: execute pipeline + optional envelope encryption and Put service.
@@ -345,20 +362,20 @@ struct RegisterResponse {
 /// Rate limited: 1 request per IP per 3 minutes.
 async fn register_handler(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(body): Json<RegisterRequest>,
 ) -> Result<(StatusCode, Json<RegisterResponse>), (StatusCode, Json<serde_json::Value>)> {
     let surface = body.surface.clone();
-    if let Some(client_ip) = client_ip_from_headers(&headers) {
-        if !state.register_rate_limiter.check_and_record(&client_ip) {
-            state.analytics.track_register_failed(&surface, "rate_limited");
-            return Err((
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(serde_json::json!({
-                    "error": "registration rate limited: one attempt per IP per 3 minutes"
-                })),
-            ));
-        }
+    let client_ip = client_ip_for_rate_limit(addr, &headers);
+    if !state.register_rate_limiter.check_and_record(&client_ip) {
+        state.analytics.track_register_failed(&surface, "rate_limited");
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "error": "registration rate limited: one attempt per IP per 3 minutes"
+            })),
+        ));
     }
 
     // Proof-of-work verification (required for register).
@@ -908,12 +925,14 @@ async fn execute_handler(
                 tracing::warn!(err = %e, "execute failed");
                 crate::observability::metrics::apply_execute_failure(&obs, &e);
                 let latency_ms = start.elapsed().as_millis();
+                let (code, prov) = crate::execute::execute_error_analytics_labels(&e);
                 analytics.track_proxy_error(
                     "/v1/execute",
                     &surface,
                     auth.user_id,
                     auth.workspace_id,
-                    &e.to_string(),
+                    code,
+                    prov,
                     latency_ms,
                 );
                 analytics.track_added_latency(
@@ -940,7 +959,8 @@ async fn execute_handler(
                     &surface,
                     auth.user_id,
                     auth.workspace_id,
-                    "execute exceeded 60s client timeout",
+                    "timeout",
+                    None,
                     latency_ms,
                 );
                 analytics.track_added_latency(
