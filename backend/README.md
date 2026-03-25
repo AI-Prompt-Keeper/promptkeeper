@@ -31,7 +31,7 @@ To serve the project frontend (static site in `frontend/`):
 cd backend && STATIC_DIR=../frontend cargo run
 ```
 
-**Environment:** Requires `DATABASE_URL` for auth/registration. Optional `KMS_KEY_ID` (and AWS credentials) for envelope encryption endpoints.
+**Environment:** Requires `DATABASE_URL` for auth/registration. Optional `KMS_KEY_ID` (and AWS credentials) for envelope encryption endpoints. Optional analytics: `POSTHOG_TOKEN` (project API key); optional `POSTHOG_HOST` (default US `https://us.i.posthog.com`, e.g. `https://eu.i.posthog.com` for EU) via the official [`posthog-rs`](https://posthog.com/docs/libraries/rust) client on a background worker thread.
 
 **Schema:** Run `schema/001_prompt_management.sql`, `002_auth_and_workspaces.sql`, `003_api_tokens.sql`, `004_api_tokens_scope.sql` (in order). 001 includes functions, prompt_versions, deployments for Put/Execute. `004` adds `scope` (`mgt` \| `exe`) to **client** API tokens (`api_tokens`).
 
