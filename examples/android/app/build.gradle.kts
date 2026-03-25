@@ -46,7 +46,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // PromptKeeper SDK from Maven Central
-    implementation("ai.promptkeeper:android-sdk:1.0.2")
+    implementation("ai.promptkeeper:android-sdk:1.0.6")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
