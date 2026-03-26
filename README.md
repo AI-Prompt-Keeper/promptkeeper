@@ -1,6 +1,7 @@
 # PromptKeeper (Alpha)
 
 **The Dual-Key Firewall for your LLM API Secrets.**
+
 PromptKeeper is a CLI-first encrypted prompt vault that separates **who can modify prompts** from **who can execute them**.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0%20%2B%20Proprietary-blue.svg)](#)
@@ -17,9 +18,13 @@ PromptKeeper is a CLI-first encrypted prompt vault that separates **who can modi
 - **Data loss may occur** during Alpha experimentation (including vault resets and partial writes).
 - Not suitable for production or high-risk systems.
 
+# For AI Agents
+Proceed to skill:
+* [![Integration and setup skill](.agents/skills/promptkeeper.setup.md)]
+
 ## Why PromptKeeper exists
 
-[Leaked API keys routinely lead to unexpected five-figure or six-figure cloud bills.](https://old.reddit.com/r/googlecloud/comments/1reqtvi/82000_in_48_hours_from_stolen_gemini_api_key_my/).
+[Leaked API keys routinely lead to unexpected five-figure or six-figure cloud bills](https://old.reddit.com/r/googlecloud/comments/1reqtvi/82000_in_48_hours_from_stolen_gemini_api_key_my/).
 
 PromptKeeper was created to address these issues:
 - **API key exposure**: provider secrets are embedded in mobile apps, frontend code, distributed systems, or “temporary debugging” output.
@@ -203,6 +208,40 @@ We do NOT assume:
 
 Transparency matters. Alpha is about narrowing risk, not pretending security is automatic.
 
+# Managed Service Model
+
+PromptKeeper is currently offered as a managed service during Alpha.
+
+You do not need to deploy or host PromptKeeper yourself to use the CLI, SDKs, or vault functionality.
+
+The PromptKeeper gateway and encrypted vault infrastructure are operated by PromptKeeper.
+Users interact with the service via the CLI and SDKs.
+Secrets are encrypted using envelope encryption backed by AWS KMS before storage.
+Your application communicates only through scoped PromptKeeper keys (pk_mgt_ and pk_exe_).
+
+Self-hosting is not required for Alpha usage. Future deployment models may be evaluated based on user feedback.
+
+# Pricing (Alpha)
+
+PromptKeeper is **free to use during the Alpha period.**
+
+Alpha access is intended for:
+
+- early feedback,
+- security review,
+- integration testing,
+- real-world usage validation.
+
+## What to Expect Later
+
+Pricing for the public release is expected to follow a usage-based model, likely including:
+
+- a free developer tier,
+- usage limits based on executions or storage,
+- paid plans for higher throughput, team features, and advanced controls.
+
+No billing is enabled during Alpha, and advance notice will be provided before any pricing changes take effect.
+
 ## Quick Start
 
 ### Installation
@@ -245,7 +284,7 @@ implementation("ai.promptkeeper:android-sdk:1.0.6")
 iOS - SPM
 ```swift
 dependencies: [
-    .package(url: "https://github.com/your-org/promptkeeper-ios-sdk.git", from: "1.0.11")
+    .package(url: "https://github.com/AI-Prompt-Keeper/promptkeeper/tree/main/sdks/ios", from: "1.0.11")
 ],
 targets: [
     .target(name: "YourApp", dependencies: ["PromptKeeper"])

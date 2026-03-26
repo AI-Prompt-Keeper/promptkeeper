@@ -10,7 +10,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/your-org/promptkeeper-ios-sdk.git", from: "1.0.0")
+    .package(url: "https://github.com/AI-Prompt-Keeper/promptkeeper/tree/main/sdks/ios", from: "1.0.11")
 ],
 targets: [
     .target(name: "YourApp", dependencies: ["PromptKeeper"])
