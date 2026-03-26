@@ -2,8 +2,6 @@
 
 Kotlin/Android SDK for the [Prompt Keeper](https://github.com/promptkeeper/promptkeeper) API at **https://api.promptkeeper.ai**. Supports **init** (in-memory API key), **setKey**, **setPrompt**, and **exec** (streaming). Register and obtain an API key outside this SDK; the SDK does not handle registration or login.
 
-**Not supported:** inline/raw prompts (`POST /v1/execute-raw`). Use **stored** prompts only: call `setPrompt` to register a template, then `exec` with the same function name as `function_id`.
-
 ## Requirements
 
 - Kotlin 1.9+
@@ -27,7 +25,7 @@ repositories {
     mavenLocal()
 }
 dependencies {
-    implementation("ai.promptkeeper:android-sdk:1.0.0")
+    implementation("ai.promptkeeper:android-sdk:1.0.6")
 }
 ```
 
