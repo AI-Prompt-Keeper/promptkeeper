@@ -18,6 +18,8 @@ struct AnalyticsEvent {
 #[derive(Clone)]
 pub struct AnalyticsReporter {
     tx: Option<Sender<AnalyticsEvent>>,
+    /// When `tx` is `None`, why PostHog was not started (for logging on each dropped event).
+    disabled_reason: Option<&'static str>,
 }
 
 impl AnalyticsReporter {
@@ -25,12 +27,24 @@ impl AnalyticsReporter {
     /// Optional `POSTHOG_HOST` overrides the ingestion URL (default US: `https://us.i.posthog.com`).
     /// Use `https://eu.i.posthog.com` for EU projects.
     pub fn from_env() -> Self {
-        let token = match std::env::var("POSTHOG_TOKEN") {
-            Ok(v) => v.trim().to_string(),
-            Err(_) => String::new(),
-        };
-        if token.is_empty() {
-            return Self { tx: None };
+        let (token, disabled_reason): (String, Option<&'static str>) =
+            match std::env::var("POSTHOG_TOKEN") {
+                Err(_) => (String::new(), Some("POSTHOG_TOKEN is not set")),
+                Ok(v) => {
+                    let t = v.trim().to_string();
+                    if t.is_empty() {
+                        (t, Some("POSTHOG_TOKEN is empty or whitespace only"))
+                    } else {
+                        (t, None)
+                    }
+                }
+            };
+
+        if let Some(reason) = disabled_reason {
+            return Self {
+                tx: None,
+                disabled_reason: Some(reason),
+            };
         }
 
         let ph_client = build_posthog_client(&token);
@@ -46,15 +60,31 @@ impl AnalyticsReporter {
             })
             .expect("failed to spawn analytics worker thread");
 
-        Self { tx: Some(tx) }
+        Self {
+            tx: Some(tx),
+            disabled_reason: None,
+        }
     }
 
     fn enqueue(&self, name: &str, properties: Value) {
         if let Some(tx) = &self.tx {
-            let _ = tx.send(AnalyticsEvent {
+            if let Err(e) = tx.send(AnalyticsEvent {
                 name: name.to_string(),
                 properties,
-            });
+            }) {
+                tracing::warn!(
+                    reason = "posthog worker queue closed",
+                    event = %name,
+                    error = %e,
+                    "posthog is not available"
+                );
+            }
+        } else if let Some(reason) = self.disabled_reason {
+            tracing::warn!(
+                reason = reason,
+                event = %name,
+                "posthog is not available"
+            );
         }
     }
 
