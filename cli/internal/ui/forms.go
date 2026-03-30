@@ -43,6 +43,41 @@ func FormRegister(email *string, password *string) error {
 	).Run()
 }
 
+// FormLogin collects email and password for login (same layout as registration).
+// If email is non-empty, only password is asked.
+func FormLogin(email *string, password *string) error {
+	if *email != "" {
+		return huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("Password").
+					Password(true).
+					Value(password).
+					Validate(func(s string) error {
+						return validate.ValidatePassword(s)
+					}),
+			),
+		).Run()
+	}
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Email").
+				Value(email).
+				Validate(func(s string) error {
+					return validate.ValidateEmail(s)
+				}),
+			huh.NewInput().
+				Title("Password").
+				Password(true).
+				Value(password).
+				Validate(func(s string) error {
+					return validate.ValidatePassword(s)
+				}),
+		),
+	).Run()
+}
+
 // FormSetAPIKey collects the API key.
 func FormSetAPIKey(key *string) error {
 	return huh.NewForm(

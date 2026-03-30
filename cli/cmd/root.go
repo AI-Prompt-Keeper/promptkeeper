@@ -21,7 +21,8 @@ var rootCmd = &cobra.Command{
 	Short: "Prompt Keeper CLI — test the Secure AI Gateway",
 	Long: `prke (promptkeeper) is a minimalist CLI for testing the Secure AI Gateway.
 Use 'prke register' to create a user (you receive a management API key pk_mgt_live_...),
-'prke set prke_key' to store that key, 'prke mint key' to mint an execution-only key (pk_exe_live_...) for apps,
+'prke login' to sign in with email and password (session token stored like an API key),
+'prke set prke_key' to store a key, 'prke mint key' to mint an execution-only key (pk_exe_live_...) for apps,
 and 'prke exec' to run stored prompts.
 By default, .prke-config.yaml is not read; use --debug and --use-local-config together to load it.`,
 	RunE: runRoot,

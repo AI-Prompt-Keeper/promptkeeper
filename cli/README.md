@@ -52,7 +52,16 @@ Register a new user. On success, stores the **management** API key in the system
 prke register user@example.com securePassword123
 ```
 
-### 2. set prke_key \<key\>
+### 2. login \<email\> \<password\>
+
+Sign in with `POST /v1/auth/login`. On success, stores the **session token** in the system vault (same slot as `set prke_key`) and prints JSON (`token`, `expires_at`, `user`). Omit email and/or password to use the interactive form (same style as `register`).
+
+```bash
+prke login user@example.com securePassword123
+prke login   # guided: email + password
+```
+
+### 3. set prke_key \<key\>
 
 Store the Prompt Keeper client API key for subsequent requests (management or execution-only).
 
@@ -60,7 +69,7 @@ Store the Prompt Keeper client API key for subsequent requests (management or ex
 prke set prke_key pk_mgt_live_...
 ```
 
-### 3. mint key [label]
+### 4. mint key [label]
 
 Mint an **execution-only** client API key via `POST /v1/auth/api-tokens`. Requires a **management** key (or session token) in the vault — not an execution-only key. The new key is printed once.
 
@@ -69,7 +78,7 @@ prke mint key
 prke mint key "Mobile app"
 ```
 
-### 4. store key \<provider\> \<api_key\>
+### 5. store key \<provider\> \<api_key\>
 
 Store a provider API key (OpenAI, Anthropic, etc.) in the gateway.
 
@@ -77,7 +86,7 @@ Store a provider API key (OpenAI, Anthropic, etc.) in the gateway.
 prke store key openai sk-xxxxx
 ```
 
-### 5. store prompt \<prompt_title\> \<prompt_value|file_path\> [provider]
+### 6. store prompt \<prompt_title\> \<prompt_value|file_path\> [provider]
 
 Store a prompt template. Second argument can be inline text or a file path. Use `--model` to set the preferred LLM model.
 
@@ -87,7 +96,7 @@ prke store prompt my_prompt "Hello {{name}}!" openai --model gpt-4o
 prke store prompt my_prompt ./prompt.txt
 ```
 
-### 6. exec \<prompt_title\> [key=value...] [--provider provider] [--model model]
+### 7. exec \<prompt_title\> [key=value...] [--provider provider] [--model model]
 
 Execute a prompt with streaming output. Use `--model` to override the LLM model for this run.
 
@@ -97,7 +106,7 @@ prke exec default name=Bob --provider anthropic
 prke exec default name=Bob --model gpt-4o
 ```
 
-### 7. list prompts
+### 8. list prompts
 
 List stored prompt **titles** (function names with a production deployment). Calls `GET /v1/list-prompts` with `surface=cli`. Works with **management** or **execution** client API keys.
 

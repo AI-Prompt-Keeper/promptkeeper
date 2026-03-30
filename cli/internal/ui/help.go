@@ -14,6 +14,7 @@ func DefaultHelp(binName string) string {
 	usage := Subtitle.Render("Usage")
 	usages := []string{
 		Cmd.Render(binName+" register") + " [email] [password]  " + Body.Copy().MarginLeft(0).Render("Create account (interactive if args omitted)"),
+		Cmd.Render(binName+" login") + " [email] [password]     " + Body.Copy().MarginLeft(0).Render("Sign in; store session token (interactive if args omitted)"),
 		Cmd.Render(binName+" set prke_key") + " [key]           " + Body.Copy().MarginLeft(0).Render("Store API key (interactive if omitted)"),
 		Cmd.Render(binName+" mint key") + " [label]           " + Body.Copy().MarginLeft(0).Render("Mint execution-only key pk_exe_live_... (management key required)"),
 		Cmd.Render(binName+" store") + "                      " + Body.Copy().MarginLeft(0).Render("Store a key or prompt (guided)"),

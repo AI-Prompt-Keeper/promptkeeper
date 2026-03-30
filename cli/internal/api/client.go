@@ -141,6 +141,66 @@ func (c *Client) Register(email, password, name string) (map[string]interface{},
 	return result, nil
 }
 
+// LoginUser is the `user` object in POST /v1/auth/login success response.
+type LoginUser struct {
+	ID    string  `json:"id"`
+	Email string  `json:"email"`
+	Name  *string `json:"name"`
+}
+
+// LoginResponse is the JSON body for successful POST /v1/auth/login (200).
+type LoginResponse struct {
+	Token     string    `json:"token"`
+	ExpiresAt string    `json:"expires_at"`
+	User      LoginUser `json:"user"`
+}
+
+// Login creates a session token. POST /v1/auth/login. Does not send an API key on the request.
+func (c *Client) Login(email, password string) (*LoginResponse, error) {
+	body := map[string]interface{}{
+		"email":    email,
+		"password": password,
+		"surface":  surfaceCLI,
+	}
+	jsonBody, _ := json.Marshal(body)
+	url := c.BaseURL + "/v1/auth/login"
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range c.authHeaders() {
+		req.Header.Set(k, v)
+	}
+	if c.DebugLog != nil {
+		fmt.Fprintf(c.DebugLog, "[debug] POST %s\n", url)
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if c.DebugLog != nil {
+		fmt.Fprintf(c.DebugLog, "[debug] response status: %s\n", resp.Status)
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("invalid response: JSON parse failed")
+	}
+	if resp.StatusCode != http.StatusOK {
+		msg := getErrorMsg(result)
+		return nil, fmt.Errorf("login failed (%d): %s", resp.StatusCode, msg)
+	}
+	var out LoginResponse
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("invalid login response: %w", err)
+	}
+	return &out, nil
+}
+
 // PutKey stores a provider API key. POST /v1/keys
 func (c *Client) PutKey(provider, rawSecret string) error {
 	body := map[string]string{
