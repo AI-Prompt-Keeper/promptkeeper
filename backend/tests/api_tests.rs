@@ -1573,3 +1573,258 @@ async fn login_wrong_password_returns_401() {
     let parsed: serde_json::Value = serde_json::from_str(&body_str).unwrap();
     assert_eq!(parsed.get("error").and_then(|v| v.as_str()).unwrap(), "invalid email or password");
 }
+
+// =============================================================================
+// 6. Workspaces
+// =============================================================================
+
+#[tokio::test]
+async fn list_workspaces_without_auth_returns_401() {
+    let app = test_app_no_kms().await;
+    let response = app
+        .oneshot(Request::get("/v1/workspaces").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn workspace_lifecycle_and_execution_key_forbidden() {
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&test_db_url())
+        .await
+        .expect("connect to test db");
+    let app = test_app_with_pool(pool.clone()).await;
+
+    let email = format!(
+        "ws-test-{}@example.com",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
+    let reg_body = json!({
+        "email": email,
+        "password": "securePassword123",
+        "name": "WS Test"
+    });
+
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
+    let reg = app
+        .clone()
+        .oneshot(
+            with_connect_info(
+                Request::post("/v1/auth/register")
+                    .header("Content-Type", "application/json")
+                    .header("X-Pow-Nonce", pow_n)
+                    .header("X-Pow-Solution", pow_s)
+                    .header("X-Pow-Valid-Until", pow_v)
+                    .body(Body::from(serde_json::to_vec(&reg_body).unwrap()))
+                    .unwrap(),
+            ),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(reg.status(), StatusCode::CREATED);
+
+    let reg_body_str = body_string(reg.into_body()).await;
+    let reg_parsed: serde_json::Value = serde_json::from_str(&reg_body_str).unwrap();
+    let mgt_key = reg_parsed
+        .get("api_key")
+        .and_then(|v| v.as_str())
+        .expect("mgt key")
+        .to_string();
+
+    let list = app
+        .clone()
+        .oneshot(
+            Request::get("/v1/workspaces")
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list.status(), StatusCode::OK);
+    let list_body = body_string(list.into_body()).await;
+    let list_parsed: serde_json::Value = serde_json::from_str(&list_body).unwrap();
+    let arr = list_parsed
+        .get("workspaces")
+        .and_then(|v| v.as_array())
+        .expect("workspaces array");
+    assert_eq!(arr.len(), 1);
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/workspaces")
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "name": "Second Workspace" })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let create_body = body_string(create.into_body()).await;
+    let create_parsed: serde_json::Value = serde_json::from_str(&create_body).unwrap();
+    let second_id = create_parsed
+        .get("id")
+        .and_then(|v| v.as_str())
+        .expect("new workspace id");
+    assert!(
+        create_parsed
+            .get("api_key")
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .starts_with("pk_mgt_live_")
+    );
+
+    let list2 = app
+        .clone()
+        .oneshot(
+            Request::get("/v1/workspaces")
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list2.status(), StatusCode::OK);
+    let list2_body = body_string(list2.into_body()).await;
+    let list2_parsed: serde_json::Value = serde_json::from_str(&list2_body).unwrap();
+    assert_eq!(
+        list2_parsed
+            .get("workspaces")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap(),
+        2
+    );
+
+    let get_ws = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/v1/workspaces/{}", second_id))
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get_ws.status(), StatusCode::OK);
+    let get_body = body_string(get_ws.into_body()).await;
+    let get_parsed: serde_json::Value = serde_json::from_str(&get_body).unwrap();
+    assert_eq!(
+        get_parsed.get("name").and_then(|v| v.as_str()).unwrap(),
+        "Second Workspace"
+    );
+    assert!(
+        get_parsed
+            .get("api_tokens")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .len()
+            >= 1
+    );
+
+    let patch = app
+        .clone()
+        .oneshot(
+            Request::patch(format!("/v1/workspaces/{}", second_id))
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "name": "Renamed Second" })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch.status(), StatusCode::OK);
+
+    let mint_exe = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/auth/api-tokens")
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&json!({ "label": "exe" })).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mint_exe.status(), StatusCode::CREATED);
+    let mint_body = body_string(mint_exe.into_body()).await;
+    let mint_parsed: serde_json::Value = serde_json::from_str(&mint_body).unwrap();
+    let exe_key = mint_parsed
+        .get("api_key")
+        .and_then(|v| v.as_str())
+        .expect("exe key")
+        .to_string();
+
+    let exe_list = app
+        .clone()
+        .oneshot(
+            Request::get("/v1/workspaces")
+                .header("Authorization", format!("Bearer {}", exe_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(exe_list.status(), StatusCode::FORBIDDEN);
+
+    let del = app
+        .clone()
+        .oneshot(
+            Request::delete(format!("/v1/workspaces/{}", second_id))
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(del.status(), StatusCode::NO_CONTENT);
+
+    let list3 = app
+        .clone()
+        .oneshot(
+            Request::get("/v1/workspaces")
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list3.status(), StatusCode::OK);
+    let list3_body = body_string(list3.into_body()).await;
+    let list3_parsed: serde_json::Value = serde_json::from_str(&list3_body).unwrap();
+    assert_eq!(
+        list3_parsed
+            .get("workspaces")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap(),
+        1
+    );
+
+    let default_wid = reg_parsed
+        .get("default_workspace_id")
+        .and_then(|v| v.as_str())
+        .expect("default workspace id");
+    let del_last = app
+        .oneshot(
+            Request::delete(format!("/v1/workspaces/{}", default_wid))
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(del_last.status(), StatusCode::BAD_REQUEST);
+}

@@ -1,5 +1,7 @@
 //! HTTP routes for the LLM proxy and secure Put (envelope encryption).
 
+mod workspaces;
+
 use axum::{
     body::Bytes,
     extract::{ConnectInfo, Extension, FromRef, Query, State},
@@ -285,6 +287,20 @@ pub async fn app_router(
         .route("/v1/auth/register", post(register_handler))
         .route("/v1/auth/api-tokens", post(create_api_token_handler))
         .route("/v1/auth/login", post(login_handler))
+        .route(
+            "/v1/workspaces",
+            get(workspaces::list_workspaces).post(workspaces::create_workspace),
+        )
+        .route(
+            "/v1/workspaces/:workspace_id",
+            get(workspaces::get_workspace)
+                .patch(workspaces::update_workspace)
+                .delete(workspaces::delete_workspace),
+        )
+        .route(
+            "/v1/workspaces/:workspace_id/mgt-key",
+            post(workspaces::mint_workspace_management_key),
+        )
         .route("/v1/keys", post(put_key_handler))
         .route("/v1/prompts", post(put_prompt_handler))
         .layer(middleware::from_fn(observability_middleware))

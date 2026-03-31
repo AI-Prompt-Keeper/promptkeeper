@@ -402,6 +402,12 @@ Verifies email and password, creates a session, and returns a session token. Use
 | POST | `/v1/auth/register` | — | Create user, workspace, and **management** client API key |
 | POST | `/v1/auth/api-tokens` | Management key or session | Mint **execution-only** client API key |
 | POST | `/v1/auth/login` | — | Create session token |
+| POST | `/v1/workspaces` | Management key or session | Create workspace + new **management** key (returned once) |
+| GET | `/v1/workspaces` | Management key or session | List user’s workspaces (`id`, `name`) |
+| GET | `/v1/workspaces/:id` | Management key or session | Workspace + **client** API token metadata (no secrets) |
+| PATCH | `/v1/workspaces/:id` | Management key or session | Rename workspace |
+| DELETE | `/v1/workspaces/:id` | Management key or session | Delete workspace (not last); cascades stored prompts/keys |
+| POST | `/v1/workspaces/:id/mgt-key` | Management key or session | Mint a new **management** client API key for the workspace (shown once) |
 
 **Note:** Execute and Put are gated by auth. Execute requires a stored prompt (`POST /v1/prompts`) and a stored **provider** key (`POST /v1/keys`). Provider secrets → table **`api_keys`**; Prompts → `prompt_versions` + deployments. **Client** keys (management / execution) → **`api_tokens`**.
 

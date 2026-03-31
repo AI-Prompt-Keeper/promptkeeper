@@ -24,11 +24,26 @@ These are keys **we** issue (stored hashed in `api_tokens`). They are **not** th
 
 **Registration** returns a management key plus `api_key_scope: "mgt"`. **Mint** an execution key with `POST /v1/auth/api-tokens` using a management key or a session token from login.
 
-**Restrictions:** An execution-only key receives **403 Forbidden** on mutating requests other than `POST /v1/execute` (e.g. `POST /v1/keys`, `POST /v1/prompts`, `POST /v1/auth/api-tokens`). It may call **`GET /v1/list-prompts`**. Session tokens and management keys are not subject to this restriction.
+**Restrictions:** An execution-only key receives **403 Forbidden** on mutating requests other than `POST /v1/execute` (e.g. `POST /v1/keys`, `POST /v1/prompts`, `POST /v1/auth/api-tokens`) and on **all** workspace routes under `/v1/workspaces`. It may call **`GET /v1/list-prompts`**. Session tokens and management keys are not subject to this restriction.
 
 ### Session tokens
 
-`POST /v1/auth/login` returns a 64-character hex session token; use it like a client key for management operations.
+`POST /v1/auth/login` returns a 64-character hex session token; use it like a client key for management operations. Session auth uses the user’s **first** workspace (by `workspace_members.created_at`) as `workspace_id` for execute/put when no API key is present; **workspace list/create/get/edit/delete** use membership checks and path parameters instead.
+
+### Workspaces (management / session only)
+
+`POST /v1/execute`, `POST /v1/keys`, `POST /v1/prompts`, and `GET /v1/list-prompts` resolve the workspace **only** from the **client API key** (`api_tokens.workspace_id`). No extra header is required. Workspace CRUD is for convenience; use a **management** key or **session** token (not execution-only keys).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/v1/workspaces` | Create workspace (caller becomes owner). Body: `name` (required), optional `surface`. Returns `id`, `name`, `slug`, `api_key` (management key, shown once), `api_key_scope: "mgt"`. |
+| `GET` | `/v1/workspaces` | List workspaces the user belongs to (`id` + `name` only). |
+| `GET` | `/v1/workspaces/:workspace_id` | Workspace `name`/`slug` plus **`api_tokens`** metadata (`id`, `label`, `scope`, `created_at`). Plaintext client secrets are **not** retrievable; response includes a `note` explaining this. |
+| `PATCH` | `/v1/workspaces/:workspace_id` | Rename workspace. Body: `{ "name": "..." }`. Client keys unchanged. |
+| `DELETE` | `/v1/workspaces/:workspace_id` | Delete workspace, deployments and prompt versions for that workspace `context_id`, provider vault rows, and client tokens (FK cascade). **Cannot delete the user’s last workspace** (`400`). |
+| `POST` | `/v1/workspaces/:workspace_id/mgt-key` | Mint a new **management** client API key for this workspace. Returned plaintext key is shown once to the caller; only its hash is persisted. |
+
+**Auth:** `Authorization: Bearer` or `X-API-Key` with session token or `pk_mgt_live_` key. **403** for `pk_exe_live_` keys.
 
 ---
 

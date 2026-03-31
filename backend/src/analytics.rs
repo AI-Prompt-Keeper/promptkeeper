@@ -348,6 +348,36 @@ impl AnalyticsReporter {
             }),
         );
     }
+
+    /// POST /v1/workspaces succeeded.
+    pub fn track_workspace_created(
+        &self,
+        surface: &str,
+        user_id: uuid::Uuid,
+        workspace_id: uuid::Uuid,
+    ) {
+        self.enqueue(
+            "workspace_created",
+            serde_json::json!({
+                "distinct_id": user_id.to_string(),
+                "surface": surface,
+                "workspace_id": workspace_id.to_string(),
+                "endpoint": "/v1/workspaces",
+            }),
+        );
+    }
+
+    /// DELETE /v1/workspaces/:id succeeded.
+    pub fn track_workspace_deleted(&self, user_id: uuid::Uuid, workspace_id: uuid::Uuid) {
+        self.enqueue(
+            "workspace_deleted",
+            serde_json::json!({
+                "distinct_id": user_id.to_string(),
+                "workspace_id": workspace_id.to_string(),
+                "endpoint": "/v1/workspaces",
+            }),
+        );
+    }
 }
 
 fn build_posthog_client(token: &str) -> Client {
