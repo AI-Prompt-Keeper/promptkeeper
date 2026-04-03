@@ -37,6 +37,11 @@ async fn user_workspace_count(pool: &sqlx::PgPool, user_id: Uuid) -> Result<i64,
     .await
 }
 
+/// Signup creates one workspace per user with slug `{user_id}-personal` (see `register` in `routes.rs`).
+fn is_signup_default_workspace(user_id: Uuid, workspace_slug: &str) -> bool {
+    workspace_slug == format!("{user_id}-personal")
+}
+
 async fn user_is_member(
     pool: &sqlx::PgPool,
     user_id: Uuid,
@@ -355,6 +360,32 @@ pub async fn update_workspace(
         ));
     }
 
+    let slug: String = sqlx::query_scalar("SELECT slug FROM workspaces WHERE id = $1")
+        .bind(workspace_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, "load workspace slug for update");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "failed to update workspace" })),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "workspace not found" })),
+            )
+        })?;
+    if is_signup_default_workspace(auth.user_id, &slug) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "the default workspace created at signup cannot be renamed"
+            })),
+        ));
+    }
+
     let name = body.name.trim();
     if name.is_empty() {
         return Err((
@@ -525,6 +556,32 @@ pub async fn delete_workspace(
         return Err((
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({ "error": "cannot delete last workspace" })),
+        ));
+    }
+
+    let slug: String = sqlx::query_scalar("SELECT slug FROM workspaces WHERE id = $1")
+        .bind(workspace_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, "load workspace slug for delete");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "failed to delete workspace" })),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "workspace not found" })),
+            )
+        })?;
+    if is_signup_default_workspace(auth.user_id, &slug) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "the default workspace created at signup cannot be deleted"
+            })),
         ));
     }
 

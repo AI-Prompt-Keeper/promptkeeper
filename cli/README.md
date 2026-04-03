@@ -42,11 +42,11 @@ base_url: "https://api.promptkeeper.com"
 
 ## Commands
 
-**Client API keys** (see `docs/CLIENT_KEY_MANAGEMENT.md` in the repo): registration returns a **management** key (`pk_mgt_live_...`). You can **mint** an **execution-only** key (`pk_exe_live_...`) for embeds and automation that should only call `POST /v1/execute`. Execution-only keys get **403** on storing provider keys, prompts, or minting further tokens.
+**Workspaces & client API keys** (see `docs/CLIENT_KEY_MANAGEMENT.md` and `backend/backend-specs.md`): the CLI keeps **per-workspace** management (`pk_mgt_live_...`) and execution (`pk_exe_live_...`) keys in the **OS secure store** on macOS/Linux (with a fallback to printing secrets if keyring is unavailable). Active workspace is stored in `~/.prke-state.yaml`. Registration creates a **personal** default workspace; login selects it and may require **`workspace mint-mgt`** because existing keys cannot be fetched from the API.
 
 ### 1. register \<email\> \<password\>
 
-Register a new user. On success, stores the **management** API key in the system vault and prints a reminder to save it (shown once).
+Register a new user. On success, stores the **management** API key for your **default (personal) workspace** in the OS secure store and prints a reminder (shown once).
 
 ```bash
 prke register user@example.com securePassword123
@@ -54,22 +54,34 @@ prke register user@example.com securePassword123
 
 ### 2. login \<email\> \<password\>
 
-Sign in with `POST /v1/auth/login`. On success, stores the **session token** in the system vault (same slot as `set prke_key`) and prints JSON (`token`, `expires_at`, `user`). Omit email and/or password to use the interactive form (same style as `register`).
+Sign in with `POST /v1/auth/login`. Stores the **session token**, sets the active workspace to your **personal** workspace, and prints JSON (`token`, `expires_at`, `user`). If you have no management key stored locally for that workspace, run **`workspace mint-mgt`** (keys are not retrievable from the server). Omit email/password for the interactive form.
 
 ```bash
 prke login user@example.com securePassword123
 prke login   # guided: email + password
 ```
 
-### 3. set prke_key \<key\>
+### 3. workspace (list \| switch \| create \| mint-mgt \| current)
 
-Store the Prompt Keeper client API key for subsequent requests (management or execution-only).
+Manage workspaces (`GET/POST /v1/workspaces`). Use **`workspace switch \<uuid\>`** before commands that need a specific workspace. If you have no stored management key for that workspace, run **`workspace mint-mgt`** after logging in.
+
+```bash
+prke workspace list
+prke workspace switch 00000000-0000-0000-0000-000000000000
+prke workspace create "My team"
+prke workspace mint-mgt "New laptop"
+prke workspace current
+```
+
+### 4. set prke_key \<key\>
+
+Store a client key for the **active workspace** (management `pk_mgt_live_...` or execution `pk_exe_live_...`), or a session token. If no active workspace is set, uses a legacy single keyring slot.
 
 ```bash
 prke set prke_key pk_mgt_live_...
 ```
 
-### 4. mint key [label]
+### 5. mint key [label]
 
 Mint an **execution-only** client API key via `POST /v1/auth/api-tokens`. Requires a **management** key (or session token) in the vault — not an execution-only key. The new key is printed once.
 
@@ -78,7 +90,7 @@ prke mint key
 prke mint key "Mobile app"
 ```
 
-### 5. store key \<provider\> \<api_key\>
+### 6. store key \<provider\> \<api_key\>
 
 Store a provider API key (OpenAI, Anthropic, etc.) in the gateway.
 
@@ -86,7 +98,7 @@ Store a provider API key (OpenAI, Anthropic, etc.) in the gateway.
 prke store key openai sk-xxxxx
 ```
 
-### 6. store prompt \<prompt_title\> \<prompt_value|file_path\> [provider]
+### 7. store prompt \<prompt_title\> \<prompt_value|file_path\> [provider]
 
 Store a prompt template. Second argument can be inline text or a file path. Use `--model` to set the preferred LLM model.
 
@@ -96,7 +108,7 @@ prke store prompt my_prompt "Hello {{name}}!" openai --model gpt-4o
 prke store prompt my_prompt ./prompt.txt
 ```
 
-### 7. exec \<prompt_title\> [key=value...] [--provider provider] [--model model]
+### 8. exec \<prompt_title\> [key=value...] [--provider provider] [--model model]
 
 Execute a prompt with streaming output. Use `--model` to override the LLM model for this run.
 
@@ -106,7 +118,7 @@ prke exec default name=Bob --provider anthropic
 prke exec default name=Bob --model gpt-4o
 ```
 
-### 8. list prompts
+### 9. list prompts
 
 List stored prompt **titles** (function names with a production deployment). Calls `GET /v1/list-prompts` with `surface=cli`. Works with **management** or **execution** client API keys.
 
@@ -119,3 +131,4 @@ prke list prompts
 - Input validation: email, password, path traversal, length limits
 - Paths: `..` rejected; file size limited to 64KB
 - All errors printed to stderr
+- **Secrets:** management/execution/session tokens are stored in the OS keychain (macOS) or secret service (Linux) when available; otherwise the CLI prints them to stdout with a warning so you can copy them elsewhere

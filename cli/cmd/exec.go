@@ -9,6 +9,7 @@ import (
 
 	"github.com/promptkeeper/cli/internal/api"
 	"github.com/promptkeeper/cli/internal/config"
+	"github.com/promptkeeper/cli/internal/keyresolve"
 	"github.com/promptkeeper/cli/internal/ui"
 	"github.com/promptkeeper/cli/internal/usererr"
 	"github.com/promptkeeper/cli/internal/validate"
@@ -28,12 +29,13 @@ If prompt_title is omitted, an interactive form will guide you.`,
 	RunE: runExec,
 }
 
-var execProvider, execModel string
+var execProvider, execModel, execKeyFlag string
 
 func init() {
 	rootCmd.AddCommand(execCmd)
 	execCmd.Flags().StringVar(&execProvider, "provider", "", "Preferred provider (e.g. openai, anthropic)")
 	execCmd.Flags().StringVar(&execModel, "model", "", "LLM model override (e.g. gpt-4o, claude-3-5-sonnet)")
+	execCmd.Flags().StringVar(&execKeyFlag, "key", "", "Optional client API key or alias (verified for active workspace via verify-client-key)")
 }
 
 func runExec(cmd *cobra.Command, args []string) error {
@@ -138,9 +140,18 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 	dbg("config: base_url=%s", cfg.BaseURL())
 
-	token, err := cfg.GetAPIKey()
+	var token string
+	var dbgKey io.Writer
+	if rootDebug {
+		dbgKey = os.Stderr
+	}
+	if strings.TrimSpace(execKeyFlag) != "" {
+		token, err = keyresolve.ResolveClientKeyForCommand(cfg, cfg.BaseURL(), execKeyFlag, cfg.CurrentWorkspaceID(), dbgKey)
+	} else {
+		token, err = cfg.AuthTokenForExec()
+	}
 	if err != nil {
-		PrintAPIError(os.Stderr, err.Error(), "Run '"+bin()+" register' or '"+bin()+" set prke_key <key>' first to set your API key.")
+		PrintAPIError(os.Stderr, err.Error(), "Run '"+bin()+" login', '"+bin()+" register', '"+bin()+" workspace mint-mgt', or '"+bin()+" set prke_key <key>'.")
 		return err
 	}
 	dbg("api_key: found (%d chars)", len(token))

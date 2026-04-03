@@ -17,7 +17,7 @@ import (
 var loginCmd = &cobra.Command{
 	Use:   "login [email] [password]",
 	Short: "Sign in and store a session token",
-	Long:  "POST /v1/auth/login with your email and password. On success, stores the session token in the system vault (same slot as `set prke_key`) and prints the JSON response. If email or password is omitted, an interactive form will guide you.",
+	Long:  "POST /v1/auth/login with your email and password. On success, stores the session token and the new management key for your default workspace (per backend). Sets the active workspace from default_workspace_id. If email or password is omitted, an interactive form will guide you.",
 	Args:  cobra.MaximumNArgs(2),
 	RunE:  runLogin,
 }
@@ -31,9 +31,6 @@ func runLogin(_ *cobra.Command, args []string) error {
 	password := ""
 	if len(args) >= 1 {
 		first := strings.TrimSpace(args[0])
-		// When only one positional arg is provided, accept it as either:
-		// - email (if it validates), or
-		// - password (otherwise), and then use the guided flow for any missing field.
 		if len(args) == 1 {
 			if err := validate.ValidateEmail(first); err == nil {
 				email = first
@@ -48,7 +45,6 @@ func runLogin(_ *cobra.Command, args []string) error {
 		password = strings.TrimSpace(args[1])
 	}
 
-	// Guided flow when either field is missing.
 	if len(args) < 2 || strings.TrimSpace(email) == "" || strings.TrimSpace(password) == "" {
 		if err := ui.FormLogin(&email, &password); err != nil {
 			return err
@@ -95,8 +91,17 @@ func runLogin(_ *cobra.Command, args []string) error {
 	}
 
 	if resp.Token != "" {
-		if err := cfg.SetAPIKey(resp.Token); err != nil {
-			fmt.Fprintln(os.Stderr, ui.WarningBlock("Warning", "Could not store session token in vault: "+err.Error()))
+		cfg.SetSessionToken(resp.Token)
+	}
+	if resp.User.ID != "" && resp.DefaultWorkspaceID != "" {
+		if err := cfg.SetPersonalWorkspaceAndSessionUser(resp.DefaultWorkspaceID, resp.User.ID); err != nil {
+			fmt.Fprintln(os.Stderr, ui.WarningBlock("Warning", "Could not save workspace state: "+err.Error()))
+		}
+		if err := cfg.SetCurrentWorkspaceID(resp.DefaultWorkspaceID); err != nil {
+			fmt.Fprintln(os.Stderr, ui.WarningBlock("Warning", "Could not set active workspace: "+err.Error()))
+		}
+		if resp.APIKey != "" {
+			cfg.SetWorkspaceManagementKey(resp.DefaultWorkspaceID, resp.APIKey)
 		}
 	}
 
@@ -110,8 +115,16 @@ func runLogin(_ *cobra.Command, args []string) error {
 	if resp.Token != "" {
 		fmt.Fprintln(os.Stdout)
 		fmt.Fprintln(os.Stdout, ui.WarningBlock("⚠️  IMPORTANT: Session token",
-			"Treat it like a password. The CLI has saved it to the vault for subsequent commands.",
+			"Treat it like a password. Saved to the OS secure store when available.",
 			"Expires at: "+resp.ExpiresAt))
+	}
+	ws := cfg.CurrentWorkspaceID()
+	if ws != "" && cfg.GetWorkspaceManagementKey(ws) == "" && resp.APIKey == "" {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, ui.WarningBlock("Next step",
+			"No management key was returned or stored.",
+			"Mint one for this workspace:",
+			bin()+" workspace mint-mgt"))
 	}
 
 	return nil

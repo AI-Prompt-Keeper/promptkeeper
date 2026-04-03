@@ -1484,12 +1484,20 @@ async fn login_happy_path_returns_200_and_token() {
 
     assert_eq!(reg.status(), StatusCode::CREATED);
 
+    let reg_body_str = body_string(reg.into_body()).await;
+    let reg_parsed: serde_json::Value = serde_json::from_str(&reg_body_str).unwrap();
+    let reg_default_ws = reg_parsed
+        .get("default_workspace_id")
+        .and_then(|v| v.as_str())
+        .expect("register default_workspace_id");
+
     let login_body = json!({
         "email": email,
         "password": "securePassword123"
     });
 
     let response = app
+        .clone()
         .oneshot(
             Request::post("/v1/auth/login")
                 .header("Content-Type", "application/json")
@@ -1516,6 +1524,179 @@ async fn login_happy_path_returns_200_and_token() {
     assert!(user.get("id").is_some());
     assert!(user.get("name").is_some());
     assert!(user.get("password").is_none(), "User object must not contain password");
+
+    let def_ws = parsed
+        .get("default_workspace_id")
+        .and_then(|v| v.as_str())
+        .expect("default_workspace_id must be present");
+    assert_eq!(
+        def_ws, reg_default_ws,
+        "login default_workspace_id must match signup workspace"
+    );
+
+    let mgt = parsed.get("api_key").and_then(|v| v.as_str()).expect("api_key must be present");
+    assert!(mgt.starts_with("pk_mgt_live_"), "login must mint a management key");
+    assert_eq!(
+        parsed.get("api_key_scope").and_then(|v| v.as_str()),
+        Some("mgt")
+    );
+
+    let list = app
+        .oneshot(
+            Request::get("/v1/list-prompts")
+                .header("Authorization", format!("Bearer {}", mgt))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list.status(), StatusCode::OK, "login-minted management key must authenticate");
+}
+
+#[tokio::test]
+async fn verify_client_key_resolves_workspace_and_rejects_mismatch() {
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&test_db_url())
+        .await
+        .expect("connect to test db");
+    let app = test_app_with_pool(pool.clone()).await;
+
+    let email = format!(
+        "verify-key-{}@example.com",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
+    let reg_body = json!({
+        "email": email,
+        "password": "securePassword123",
+        "name": "Verify Key"
+    });
+
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
+    let reg = app
+        .clone()
+        .oneshot(
+            with_connect_info(
+                Request::post("/v1/auth/register")
+                    .header("Content-Type", "application/json")
+                    .header("X-Pow-Nonce", pow_n)
+                    .header("X-Pow-Solution", pow_s)
+                    .header("X-Pow-Valid-Until", pow_v)
+                    .body(Body::from(serde_json::to_vec(&reg_body).unwrap()))
+                    .unwrap(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reg.status(), StatusCode::CREATED);
+    let reg_body_str = body_string(reg.into_body()).await;
+    let reg_parsed: serde_json::Value = serde_json::from_str(&reg_body_str).unwrap();
+    let mgt1 = reg_parsed
+        .get("api_key")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .to_string();
+    let w1 = reg_parsed
+        .get("default_workspace_id")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .to_string();
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/workspaces")
+                .header("Authorization", format!("Bearer {}", mgt1))
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "name": "Second Workspace" })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let create_body = body_string(create.into_body()).await;
+    let create_parsed: serde_json::Value = serde_json::from_str(&create_body).unwrap();
+    let w2 = create_parsed
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap();
+
+    let v1 = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/auth/verify-client-key")
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&json!({ "api_key": mgt1 })).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(v1.status(), StatusCode::OK);
+    let v1_body = body_string(v1.into_body()).await;
+    let v1_parsed: serde_json::Value = serde_json::from_str(&v1_body).unwrap();
+    assert_eq!(v1_parsed.get("ok").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+        v1_parsed.get("workspace_id").and_then(|v| v.as_str()),
+        Some(w1.as_str())
+    );
+    assert_eq!(v1_parsed.get("scope").and_then(|v| v.as_str()), Some("mgt"));
+
+    let v_ok = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/auth/verify-client-key")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "api_key": mgt1,
+                        "workspace_id": w1
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(v_ok.status(), StatusCode::OK);
+
+    let v_bad = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/auth/verify-client-key")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "api_key": mgt1,
+                        "workspace_id": w2
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(v_bad.status(), StatusCode::FORBIDDEN);
+
+    let bad_key = app
+        .oneshot(
+            Request::post("/v1/auth/verify-client-key")
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "api_key": "pk_mgt_live_00000000000000000000000000000000000000000000000000000000_abcd"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bad_key.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -1684,6 +1865,38 @@ async fn workspace_lifecycle_and_execution_key_forbidden() {
             .starts_with("pk_mgt_live_")
     );
 
+    let default_wid = reg_parsed
+        .get("default_workspace_id")
+        .and_then(|v| v.as_str())
+        .expect("default workspace id");
+
+    let patch_default = app
+        .clone()
+        .oneshot(
+            Request::patch(format!("/v1/workspaces/{}", default_wid))
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({ "name": "Renamed Default" })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch_default.status(), StatusCode::FORBIDDEN);
+
+    let del_default = app
+        .clone()
+        .oneshot(
+            Request::delete(format!("/v1/workspaces/{}", default_wid))
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(del_default.status(), StatusCode::FORBIDDEN);
+
     let list2 = app
         .clone()
         .oneshot(
@@ -1813,10 +2026,6 @@ async fn workspace_lifecycle_and_execution_key_forbidden() {
         1
     );
 
-    let default_wid = reg_parsed
-        .get("default_workspace_id")
-        .and_then(|v| v.as_str())
-        .expect("default workspace id");
     let del_last = app
         .oneshot(
             Request::delete(format!("/v1/workspaces/{}", default_wid))

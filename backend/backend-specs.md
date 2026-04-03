@@ -28,7 +28,7 @@ These are keys **we** issue (stored hashed in `api_tokens`). They are **not** th
 
 ### Session tokens
 
-`POST /v1/auth/login` returns a 64-character hex session token; use it like a client key for management operations. Session auth uses the user’s **first** workspace (by `workspace_members.created_at`) as `workspace_id` for execute/put when no API key is present; **workspace list/create/get/edit/delete** use membership checks and path parameters instead.
+`POST /v1/auth/login` returns a 64-character hex **session** token plus a **newly minted** management API key (`api_key`, `api_key_scope: "mgt"`, `default_workspace_id`) for the user’s **first** workspace (by `workspace_members.created_at`, same as signup default). Either the session token or the management key can be used for management operations. Session auth uses that first workspace as `workspace_id` for execute/put when no API key is present; **workspace list/create/get/edit/delete** use membership checks and path parameters instead.
 
 ### Workspaces (management / session only)
 
@@ -39,8 +39,8 @@ These are keys **we** issue (stored hashed in `api_tokens`). They are **not** th
 | `POST` | `/v1/workspaces` | Create workspace (caller becomes owner). Body: `name` (required), optional `surface`. Returns `id`, `name`, `slug`, `api_key` (management key, shown once), `api_key_scope: "mgt"`. |
 | `GET` | `/v1/workspaces` | List workspaces the user belongs to (`id` + `name` only). |
 | `GET` | `/v1/workspaces/:workspace_id` | Workspace `name`/`slug` plus **`api_tokens`** metadata (`id`, `label`, `scope`, `created_at`). Plaintext client secrets are **not** retrievable; response includes a `note` explaining this. |
-| `PATCH` | `/v1/workspaces/:workspace_id` | Rename workspace. Body: `{ "name": "..." }`. Client keys unchanged. |
-| `DELETE` | `/v1/workspaces/:workspace_id` | Delete workspace, deployments and prompt versions for that workspace `context_id`, provider vault rows, and client tokens (FK cascade). **Cannot delete the user’s last workspace** (`400`). |
+| `PATCH` | `/v1/workspaces/:workspace_id` | Rename workspace. Body: `{ "name": "..." }`. Client keys unchanged. **Cannot rename** the signup default workspace (slug `{user_id}-personal`); **`403`** with `error` explaining this. |
+| `DELETE` | `/v1/workspaces/:workspace_id` | Delete workspace, deployments and prompt versions for that workspace `context_id`, provider vault rows, and client tokens (FK cascade). **Cannot delete** the signup default workspace (**`403`**). **Cannot delete the user’s last workspace** (`400`). |
 | `POST` | `/v1/workspaces/:workspace_id/mgt-key` | Mint a new **management** client API key for this workspace. Returned plaintext key is shown once to the caller; only its hash is persisted. |
 
 **Auth:** `Authorization: Bearer` or `X-API-Key` with session token or `pk_mgt_live_` key. **403** for `pk_exe_live_` keys.
@@ -314,7 +314,7 @@ JSON body: `{ "error": "<message>" }`. 401 (auth), 403 (execution-only caller), 
 
 ### 5. Login (create session)
 
-Verifies email and password, creates a session, and returns a session token. Uses generic "invalid email or password" on any auth failure to avoid user enumeration. Requires `DATABASE_URL`.
+Verifies email and password, creates a session, and returns a session token **and** a new management client API key for the user’s default (first) workspace—same fields as register (`default_workspace_id`, `api_key`, `api_key_scope`). Each login adds a new row in `api_tokens` (label `Login`). Uses generic "invalid email or password" on any auth failure to avoid user enumeration. Requires `DATABASE_URL`.
 
 | Property | Value |
 |----------|--------|
@@ -347,6 +347,9 @@ Verifies email and password, creates a session, and returns a session token. Use
 | `token` | string | Session token (hex, 64 chars). Send in `Authorization: Bearer <token>`. |
 | `expires_at` | string (ISO 8601) | Session expiry (7 days from login). |
 | `user` | object | `{ id, email, name }`. |
+| `default_workspace_id` | string (UUID) | User’s first workspace (signup default). |
+| `api_key` | string | New `pk_mgt_live_` management key for that workspace; shown once. |
+| `api_key_scope` | string | Always `"mgt"`. |
 
 **Example response body:**
 
@@ -358,7 +361,10 @@ Verifies email and password, creates a session, and returns a session token. Use
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "email": "user@example.com",
     "name": "Alice"
-  }
+  },
+  "default_workspace_id": "550e8400-e29b-41d4-a716-446655440001",
+  "api_key": "pk_mgt_live_...",
+  "api_key_scope": "mgt"
 }
 ```
 
@@ -373,6 +379,44 @@ JSON body: `{ "error": "invalid email or password" }` or `{ "error": "login fail
 
 ---
 
+### 5b. Verify client API key ↔ workspace
+
+**Unauthenticated.** Checks that a plaintext Prompt Keeper client key (`pk_mgt_live_` / `pk_exe_live_`) exists in `api_tokens` and returns its workspace and scope. Session tokens (64 hex) are **not** accepted.
+
+Use this when a client needs to confirm a raw key belongs to an expected workspace (e.g. CLI `--key` or secure-store recovery) before using it. For normal requests, the server already binds `workspace_id` from the key row—`POST /v1/execute`, `POST /v1/keys`, etc. never take a separate workspace override.
+
+| Property | Value |
+|----------|--------|
+| **Method** | `POST` |
+| **Path** | `/v1/auth/verify-client-key` |
+| **Request body** | JSON |
+
+| Name | Type | Mandatory | Description |
+|------|------|-----------|-------------|
+| `api_key` | string | Yes | Client API key to look up (hashed in DB). |
+| `workspace_id` | string (UUID) | No | If present, must equal the key’s workspace or the response is **403**. |
+
+#### Return value (success, 200)
+
+| Name | Type | Description |
+|------|------|-------------|
+| `ok` | bool | Always `true` on success. |
+| `workspace_id` | string (UUID) | Workspace bound to this key at mint time. |
+| `scope` | string | `"mgt"` or `"exe"`. |
+
+#### Return value (error)
+
+| HTTP status | When |
+|-------------|------|
+| 400 | Missing or empty `api_key`. |
+| 401 | Invalid checksum, unknown key, or not a client key shape. |
+| 403 | Key is valid but `workspace_id` was provided and does not match. JSON includes `ok: false` and `error`. |
+| 500 | Database error. |
+
+**Security:** Send only over HTTPS; body contains a secret.
+
+---
+
 ## Summary table
 
 | Method | Path | Request body | Response | Mandatory params |
@@ -383,4 +427,5 @@ JSON body: `{ "error": "invalid email or password" }` or `{ "error": "login fail
 | POST | `/v1/prompts` | JSON: `name`, `raw_secret`, `provider`? | JSON | `name`, `raw_secret` |
 | POST | `/v1/auth/register` | JSON: `email`, `password`, `name`? | JSON: user + `api_key`, `api_key_scope` | `email`, `password` |
 | POST | `/v1/auth/api-tokens` | JSON: `label`?, `surface`? | JSON: `api_key`, `scope`, `label` | — (auth required) |
-| POST | `/v1/auth/login` | JSON: `email`, `password` | JSON: `token`, `user` | `email`, `password` |
+| POST | `/v1/auth/login` | JSON: `email`, `password` | JSON: `token`, `user`, `default_workspace_id`, `api_key`, `api_key_scope` | `email`, `password` |
+| POST | `/v1/auth/verify-client-key` | JSON: `api_key`, `workspace_id`? | JSON: `ok`, `workspace_id`, `scope` | `api_key` |

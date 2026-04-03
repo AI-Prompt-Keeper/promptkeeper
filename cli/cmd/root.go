@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/promptkeeper/cli/cmd/store"
+	"github.com/promptkeeper/cli/internal/config"
 	"github.com/promptkeeper/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -20,10 +21,10 @@ var rootCmd = &cobra.Command{
 	Use:   "prke",
 	Short: "Prompt Keeper CLI — test the Secure AI Gateway",
 	Long: `prke (promptkeeper) is a minimalist CLI for testing the Secure AI Gateway.
-Use 'prke register' to create a user (you receive a management API key pk_mgt_live_...),
-'prke login' to sign in with email and password (session token stored like an API key),
-'prke set prke_key' to store a key, 'prke mint key' to mint an execution-only key (pk_exe_live_...) for apps,
-and 'prke exec' to run stored prompts.
+Use 'prke register' to create a user (management key for your default workspace),
+'prke login' to sign in (session stored; mint a workspace management key if needed),
+'prke workspace' to list/switch workspaces, 'prke set prke_key' to store keys for the active workspace,
+'mint key' for execution-only keys, and 'prke exec' to run stored prompts.
 By default, .prke-config.yaml is not read; use --debug and --use-local-config together to load it.`,
 	RunE: runRoot,
 }
@@ -34,6 +35,7 @@ func init() {
 			rootCmd.Use = "promptkeeper"
 		}
 	}
+	config.CLIExeName = rootCmd.Use
 	rootCmd.PersistentFlags().BoolVar(&rootDebug, "debug", false, "Enable debug logging")
 	rootCmd.PersistentFlags().BoolVar(&rootUseLocalConfig, "use-local-config", false, "Read ~/.prke-config.yaml (only has effect when used with --debug)")
 	rootCmd.CompletionOptions.DisableDefaultCmd = true

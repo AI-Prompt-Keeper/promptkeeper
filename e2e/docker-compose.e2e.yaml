@@ -1,0 +1,5 @@
+# E2E overlay: backend image runs with /app = backend only; Cargo.toml needs ../service → /service.
+services:
+  backend:
+    volumes:
+      - ../service:/service:ro

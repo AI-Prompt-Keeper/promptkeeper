@@ -19,7 +19,7 @@ var setCmd = &cobra.Command{
 var setPkreKeyCmd = &cobra.Command{
 	Use:   "prke_key [key]",
 	Short: "Store API key for subsequent requests",
-	Long:  "Stores the Prompt Keeper client API key in the system vault (management pk_mgt_live_... or execution-only pk_exe_live_...). The CLI uses it for authenticated requests. Management keys can store provider keys and prompts; execution-only keys can only call exec. If key is omitted, an interactive form will prompt you.",
+	Long:  "Stores the Prompt Keeper client key in the OS secure store for the **active workspace** (see `workspace switch`). Accepts management keys (pk_mgt_live_...), execution keys (pk_exe_live_...), or a login session token (64 hex). If no active workspace is set, keys are stored in a legacy single slot. If key is omitted, an interactive form will prompt you.",
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runSetPkreKey,
 }

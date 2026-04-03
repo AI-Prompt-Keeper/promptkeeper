@@ -150,9 +150,12 @@ type LoginUser struct {
 
 // LoginResponse is the JSON body for successful POST /v1/auth/login (200).
 type LoginResponse struct {
-	Token     string    `json:"token"`
-	ExpiresAt string    `json:"expires_at"`
-	User      LoginUser `json:"user"`
+	Token              string    `json:"token"`
+	ExpiresAt          string    `json:"expires_at"`
+	User               LoginUser `json:"user"`
+	DefaultWorkspaceID string    `json:"default_workspace_id"`
+	APIKey             string    `json:"api_key"`
+	APIKeyScope        string    `json:"api_key_scope"`
 }
 
 // Login creates a session token. POST /v1/auth/login. Does not send an API key on the request.

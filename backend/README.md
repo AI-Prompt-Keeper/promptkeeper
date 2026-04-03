@@ -335,7 +335,7 @@ Creates an additional **execution-only** client API key (`pk_exe_live_...`, scop
 
 ### 5. Login — create session
 
-Verifies email and password, creates a session, and returns a session token. Uses generic "invalid email or password" on any auth failure to avoid user enumeration. Requires `DATABASE_URL`.
+Verifies email and password, creates a session, and returns a session token **and** a new management API key for the default (first) workspace (`default_workspace_id`, `api_key`, `api_key_scope`), same as registration. Uses generic "invalid email or password" on any auth failure to avoid user enumeration. Requires `DATABASE_URL`.
 
 | Property | Value |
 |----------|--------|
@@ -367,6 +367,9 @@ Verifies email and password, creates a session, and returns a session token. Use
 | `token` | string | Session token (64 hex chars). Send as `Authorization: Bearer <token>`. |
 | `expires_at` | string (ISO 8601) | Session expiry (7 days from login). |
 | `user` | object | `{ id, email, name }`. |
+| `default_workspace_id` | string (UUID) | First workspace (signup default). |
+| `api_key` | string | New `pk_mgt_live_` key for that workspace; shown once. |
+| `api_key_scope` | string | Always `mgt`. |
 
 **Example response:**
 ```json
@@ -377,7 +380,10 @@ Verifies email and password, creates a session, and returns a session token. Use
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "email": "user@example.com",
     "name": "Alice"
-  }
+  },
+  "default_workspace_id": "550e8400-e29b-41d4-a716-446655440001",
+  "api_key": "pk_mgt_live_...",
+  "api_key_scope": "mgt"
 }
 ```
 
@@ -387,6 +393,10 @@ Verifies email and password, creates a session, and returns a session token. Use
 |--------|------|
 | 401 Unauthorized | Invalid email format or credentials. |
 | 500 Internal Server Error | DB or session creation failure. |
+
+### 5b. Verify client API key — optional workspace match
+
+`POST /v1/auth/verify-client-key` with JSON `api_key` (required) and optional `workspace_id`. Returns `ok`, `workspace_id`, `scope` for valid `pk_*` keys, **401** if invalid, **403** if `workspace_id` was sent and does not match the key’s workspace. Unauthenticated; use TLS. Session tokens are not accepted. See **backend-specs.md** for details.
 
 ---
 
@@ -401,12 +411,13 @@ Verifies email and password, creates a session, and returns a session token. Use
 | POST | `/v1/prompts` | Management key or session | Store prompt template (KMS required) |
 | POST | `/v1/auth/register` | — | Create user, workspace, and **management** client API key |
 | POST | `/v1/auth/api-tokens` | Management key or session | Mint **execution-only** client API key |
-| POST | `/v1/auth/login` | — | Create session token |
+| POST | `/v1/auth/login` | — | Session token + new **management** key for default workspace |
+| POST | `/v1/auth/verify-client-key` | — | Confirm `pk_*` key ↔ workspace (optional check) |
 | POST | `/v1/workspaces` | Management key or session | Create workspace + new **management** key (returned once) |
 | GET | `/v1/workspaces` | Management key or session | List user’s workspaces (`id`, `name`) |
 | GET | `/v1/workspaces/:id` | Management key or session | Workspace + **client** API token metadata (no secrets) |
-| PATCH | `/v1/workspaces/:id` | Management key or session | Rename workspace |
-| DELETE | `/v1/workspaces/:id` | Management key or session | Delete workspace (not last); cascades stored prompts/keys |
+| PATCH | `/v1/workspaces/:id` | Management key or session | Rename workspace (**403** for signup default: slug `{user_id}-personal`) |
+| DELETE | `/v1/workspaces/:id` | Management key or session | Delete workspace (**403** for signup default; **400** if last); cascades |
 | POST | `/v1/workspaces/:id/mgt-key` | Management key or session | Mint a new **management** client API key for the workspace (shown once) |
 
 **Note:** Execute and Put are gated by auth. Execute requires a stored prompt (`POST /v1/prompts`) and a stored **provider** key (`POST /v1/keys`). Provider secrets → table **`api_keys`**; Prompts → `prompt_versions` + deployments. **Client** keys (management / execution) → **`api_tokens`**.

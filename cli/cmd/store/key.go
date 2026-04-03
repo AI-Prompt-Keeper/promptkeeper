@@ -23,6 +23,7 @@ var keyCmd = &cobra.Command{
 
 func init() {
 	StoreCmd.AddCommand(keyCmd)
+	keyCmd.Flags().StringVar(&storeClientKeyFlag, "key", "", "Optional client API key or alias (verified for active workspace via verify-client-key)")
 }
 
 func runStoreKey(cmd *cobra.Command, args []string) error {
@@ -72,19 +73,19 @@ func runStoreKey(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return DoStoreKey(cmd, provider, apiKey)
+	return DoStoreKey(cmd, provider, apiKey, storeClientKeyFlag)
 }
 
 // DoStoreKey performs the API call to store a provider key.
-// Caller must have validated provider and apiKey.
-func DoStoreKey(cmd *cobra.Command, provider, apiKey string) error {
+// Caller must have validated provider and apiKey. clientKeyOpt selects auth when non-empty (alias or pk_* verified for workspace).
+func DoStoreKey(cmd *cobra.Command, provider, apiKey, clientKeyOpt string) error {
 	useLocalConfig := getUseLocalConfig(cmd)
 	cfg, err := config.New(useLocalConfig)
 	if err != nil {
 		usererr.PrintAPIError(os.Stderr, err.Error(), "Cannot load config (e.g. home directory).")
 		return err
 	}
-	token, err := cfg.GetAPIKey()
+	token, err := resolveAuthToken(cmd, cfg, clientKeyOpt)
 	if err != nil {
 		b := getBin(cmd)
 		usererr.PrintAPIError(os.Stderr, err.Error(), "Run '"+b+" register' or '"+b+" set prke_key <key>' first to set your API key.")
