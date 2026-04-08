@@ -87,6 +87,22 @@ struct ListPromptsResponse {
 
 // Rate limiting is handled globally by `promptkeeper_service::rate_limit` middleware (see `app_router`).
 
+/// Global IP rate limit for API routes (health/metrics are exempt in middleware).
+/// Defaults: **5** requests per **60** seconds. E2E raises the cap via `docker-compose.e2e.yaml`
+/// (`RATE_LIMIT_MAX_REQUESTS` / `RATE_LIMIT_WINDOW_SECS`).
+fn rate_limiter_from_env() -> promptkeeper_service::rate_limit::RateLimiter {
+    let max = std::env::var("RATE_LIMIT_MAX_REQUESTS")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(5);
+    let window_secs = std::env::var("RATE_LIMIT_WINDOW_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(60);
+    let window = Duration::from_secs(window_secs.max(1));
+    promptkeeper_service::rate_limit::RateLimiter::new(max, window)
+}
+
 // --- Proof-of-Work for register ---
 
 /// Number of leading zero bits required in SHA256(nonce || valid_until || solution).
@@ -239,7 +255,7 @@ pub async fn app_router(
         .route("/v1/keys", post(put_key_handler))
         .route("/v1/prompts", post(put_prompt_handler))
         .layer(middleware::from_fn_with_state(
-            promptkeeper_service::rate_limit::RateLimiter::new(5, Duration::from_secs(60)),
+            rate_limiter_from_env(),
             promptkeeper_service::rate_limit::rate_limit_middleware,
         ))
         .layer(middleware::from_fn(observability_middleware))

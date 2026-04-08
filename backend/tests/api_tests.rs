@@ -1769,6 +1769,68 @@ async fn list_workspaces_without_auth_returns_401() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
+/// Regression: register persists the management key in `api_tokens`; GET /v1/workspaces must accept it.
+/// A 401 here is **not** a DB failure to commit the token row—usually a client sending the wrong credential.
+#[tokio::test]
+async fn register_mgt_key_authorizes_list_workspaces() {
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&test_db_url())
+        .await
+        .expect("connect to test db");
+    let app = test_app_with_pool(pool).await;
+
+    let email = format!(
+        "mgt-list-{}@example.com",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    );
+    let reg_body = json!({
+        "email": email,
+        "password": "securePassword123",
+        "name": "Mgt List"
+    });
+
+    let (pow_n, pow_s, pow_v) = get_register_pow_headers(&app).await;
+    let reg = app
+        .clone()
+        .oneshot(
+            with_connect_info(
+                Request::post("/v1/auth/register")
+                    .header("Content-Type", "application/json")
+                    .header("X-Pow-Nonce", pow_n)
+                    .header("X-Pow-Solution", pow_s)
+                    .header("X-Pow-Valid-Until", pow_v)
+                    .body(Body::from(serde_json::to_vec(&reg_body).unwrap()))
+                    .unwrap(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reg.status(), StatusCode::CREATED);
+    let reg_body_str = body_string(reg.into_body()).await;
+    let reg_parsed: serde_json::Value = serde_json::from_str(&reg_body_str).unwrap();
+    let mgt_key = reg_parsed
+        .get("api_key")
+        .and_then(|v| v.as_str())
+        .expect("api_key in register response")
+        .to_string();
+
+    let list = app
+        .clone()
+        .oneshot(
+            Request::get("/v1/workspaces")
+                .header("Authorization", format!("Bearer {}", mgt_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list.status(), StatusCode::OK, "GET /v1/workspaces with register mgt key must succeed");
+}
+
 #[tokio::test]
 async fn workspace_lifecycle_and_execution_key_forbidden() {
     let pool = PgPoolOptions::new()
