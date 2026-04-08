@@ -50,6 +50,8 @@ credentials.json
 # Binaries
 prke
 cli/prke
+cli/cli
+cli/bin/
 *.exe
 *.exe~
 *.dll
