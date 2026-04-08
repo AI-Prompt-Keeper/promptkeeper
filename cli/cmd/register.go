@@ -96,6 +96,8 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	if apiKey != "" && defWS != "" {
 		cfg.SetWorkspaceManagementKey(defWS, apiKey)
 		_ = cfg.ClearLegacyAPIKey()
+		// New account: drop any prior login session so workspace APIs use the new management key, not a stale session.
+		_ = cfg.ClearSessionToken()
 	} else if apiKey != "" {
 		if err := cfg.SetAPIKey(apiKey); err != nil {
 			fmt.Fprintln(os.Stderr, ui.WarningBlock("Warning", "Could not store API key: "+err.Error()))

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"strings"
 
 	"charm.land/huh/v2"
 	"github.com/promptkeeper/cli/internal/validate"
@@ -182,6 +183,67 @@ func FormStorePrompt(title *string, promptValue *string, provider *string, model
 		).
 			Title("Optional settings").
 			Description("Leave blank to use backend defaults."),
+	).Run()
+}
+
+// WorkspacePick is one workspace row for interactive rename (id + display name).
+type WorkspacePick struct {
+	ID   string
+	Name string
+}
+
+// FormWorkspacePick lists workspaces in a select field (arrow keys, Enter to confirm).
+func FormWorkspacePick(workspaces []WorkspacePick, selectedID *string) error {
+	if len(workspaces) == 0 {
+		return errors.New("no workspaces to choose from")
+	}
+	opts := make([]huh.Option[string], 0, len(workspaces))
+	for _, w := range workspaces {
+		label := strings.TrimSpace(w.Name)
+		if label == "" {
+			label = w.ID
+		}
+		opts = append(opts, huh.NewOption(label, w.ID))
+	}
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Which workspace do you want to rename?").
+				Description("↑/↓ to move, Enter to select.").
+				Options(opts...).
+				Value(selectedID).
+				Validate(func(s string) error {
+					if strings.TrimSpace(s) == "" {
+						return errors.New("please select a workspace")
+					}
+					return nil
+				}),
+		).Title("Rename workspace").
+			Description("No active workspace is set — pick one to rename."),
+	).Run()
+}
+
+// FormWorkspaceNewName asks for the new display name; currentLabel is shown as context (e.g. current name).
+func FormWorkspaceNewName(currentLabel, workspaceID string, newName *string) error {
+	desc := strings.TrimSpace(currentLabel)
+	if desc == "" {
+		desc = workspaceID
+	}
+	sub := "Current: " + desc
+	if strings.TrimSpace(workspaceID) != "" {
+		sub += "\nID: " + strings.TrimSpace(workspaceID)
+	}
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("New workspace name").
+				Description(sub).
+				Value(newName).
+				Validate(func(s string) error {
+					return validate.ValidateWorkspaceName(s)
+				}),
+		).Title("Rename workspace").
+			Description("Enter the new display name for this workspace."),
 	).Run()
 }
 

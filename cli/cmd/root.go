@@ -42,6 +42,9 @@ func init() {
 	rootCmd.SilenceUsage = true
 	// Do not SilenceErrors: Cobra must print validation errors (e.g. wrong number of args) so user sees why the command failed
 	rootCmd.AddCommand(store.StoreCmd)
+	// Workspace subcommands are registered in workspace.go init(); attach top-level commands here so they are always wired.
+	rootCmd.AddCommand(workspaceCmd)
+	rootCmd.AddCommand(mintMgtRootCmd)
 }
 
 func runRoot(c *cobra.Command, args []string) error {

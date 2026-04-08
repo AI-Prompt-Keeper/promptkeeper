@@ -10,6 +10,7 @@ import (
 	"github.com/promptkeeper/cli/internal/config"
 	"github.com/promptkeeper/cli/internal/ui"
 	"github.com/promptkeeper/cli/internal/usererr"
+	"github.com/promptkeeper/cli/internal/validate"
 	"github.com/spf13/cobra"
 )
 
@@ -60,10 +61,17 @@ var workspaceCurrentCmd = &cobra.Command{
 }
 
 var workspaceEditCmd = &cobra.Command{
-	Use:   "edit <name_or_id> <new_name>",
+	Use:   "edit [name_or_id] [new_name]",
 	Short: "Rename a workspace (not allowed for the signup default workspace)",
-	Args:  cobra.ExactArgs(2),
-	RunE:  runWorkspaceEdit,
+	Long: `Renames a workspace (PATCH /v1/workspaces/:id).
+
+With no arguments: if an active workspace is set, renames that workspace; otherwise choose a workspace from an interactive list (arrow keys), then enter the new name.
+
+One argument: workspace to rename (name, UUID, or "default"); you are prompted for the new name.
+
+Two arguments: non-interactive rename.`,
+	Args: cobra.MaximumNArgs(2),
+	RunE: runWorkspaceEdit,
 }
 
 var workspaceDeleteCmd = &cobra.Command{
@@ -82,8 +90,7 @@ var mintMgtRootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(workspaceCmd)
-	rootCmd.AddCommand(mintMgtRootCmd)
+	// Top-level registration: root.go init().
 	workspaceCmd.AddCommand(workspaceListCmd, workspaceSwitchCmd, workspaceCreateCmd, workspaceMintMgtCmd, workspaceCurrentCmd, workspaceEditCmd, workspaceDeleteCmd)
 	workspaceListCmd.Flags().BoolVar(&workspaceListJSON, "json", false, "Print JSON (default: names only, one per line)")
 	workspaceSwitchCmd.Flags().BoolVar(&workspaceSwitchMint, "mint", false, "After switching, mint a management key if none is stored locally")
@@ -172,7 +179,8 @@ func doWorkspaceSwitch(raw string) error {
 	if err := cfg.SetCurrentWorkspaceID(id); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stdout, ui.SuccessMessage("Active workspace set to "+id+"."))
+	display := workspaceDisplayName(client, id)
+	fmt.Fprintln(os.Stdout, ui.SuccessMessage("Active workspace set to "+display+"."))
 	if cfg.ShouldPromptMintMgtForCurrentWorkspace() {
 		fmt.Fprintln(os.Stdout)
 		fmt.Fprintln(os.Stdout, ui.WarningBlock("Next step",
@@ -308,11 +316,79 @@ func runWorkspaceEdit(_ *cobra.Command, args []string) error {
 	if rootDebug {
 		client.DebugLog = os.Stderr
 	}
-	wsID, err := resolveWorkspaceSpecifier(cfg, client, args[0])
-	if err != nil {
+
+	var wsID, newName string
+
+	switch len(args) {
+	case 2:
+		wsID, err = resolveWorkspaceSpecifier(cfg, client, args[0])
+		if err != nil {
+			PrintFriendlyError(os.Stderr, "Unknown workspace.", err.Error(), []string{bin() + " workspace list"})
+			return err
+		}
+		newName = strings.TrimSpace(args[1])
+	case 1:
+		wsID, err = resolveWorkspaceSpecifier(cfg, client, args[0])
+		if err != nil {
+			PrintFriendlyError(os.Stderr, "Unknown workspace.", err.Error(), []string{bin() + " workspace list"})
+			return err
+		}
+		disp := workspaceDisplayName(client, wsID)
+		if err := ui.FormWorkspaceNewName(disp, wsID, &newName); err != nil {
+			return err
+		}
+		newName = strings.TrimSpace(newName)
+	case 0:
+		cur := strings.TrimSpace(cfg.CurrentWorkspaceID())
+		if cur != "" {
+			wsID = cur
+			disp := workspaceDisplayName(client, wsID)
+			if err := ui.FormWorkspaceNewName(disp, wsID, &newName); err != nil {
+				return err
+			}
+		} else {
+			list, err := client.ListWorkspaces()
+			if err != nil {
+				usererr.PrintAPIError(os.Stderr, err.Error(), "")
+				return err
+			}
+			if len(list.Workspaces) == 0 {
+				PrintFriendlyError(os.Stderr,
+					"No workspaces found.",
+					"Register or log in, then try again.",
+					[]string{bin() + " register", bin() + " login"})
+				return fmt.Errorf("no workspaces")
+			}
+			picks := make([]ui.WorkspacePick, len(list.Workspaces))
+			for i, w := range list.Workspaces {
+				picks[i] = ui.WorkspacePick{ID: w.ID, Name: w.Name}
+			}
+			var selectedID string
+			if len(picks) > 0 {
+				selectedID = picks[0].ID
+			}
+			if err := ui.FormWorkspacePick(picks, &selectedID); err != nil {
+				return err
+			}
+			wsID = strings.TrimSpace(selectedID)
+			if wsID == "" {
+				return fmt.Errorf("no workspace selected")
+			}
+			disp := workspaceDisplayName(client, wsID)
+			if err := ui.FormWorkspaceNewName(disp, wsID, &newName); err != nil {
+				return err
+			}
+		}
+		newName = strings.TrimSpace(newName)
+	default:
+		return fmt.Errorf("at most 2 arguments allowed")
+	}
+
+	if err := validate.ValidateWorkspaceName(newName); err != nil {
+		PrintFriendlyError(os.Stderr, "Invalid workspace name.", err.Error(), []string{bin() + " workspace edit"})
 		return err
 	}
-	newName := strings.TrimSpace(args[1])
+
 	out, err := client.UpdateWorkspace(wsID, newName)
 	if err != nil {
 		usererr.PrintAPIError(os.Stderr, err.Error(), "")
@@ -353,10 +429,24 @@ func runWorkspaceDelete(_ *cobra.Command, args []string) error {
 		p := cfg.PersonalWorkspaceID()
 		if p != "" {
 			_ = cfg.SetCurrentWorkspaceID(p)
-			fmt.Fprintln(os.Stdout, ui.Body.Render("Switched active workspace to personal/default ("+p+")."))
+			pLabel := workspaceDisplayName(client, p)
+			fmt.Fprintln(os.Stdout, ui.Body.Render("Switched active workspace to personal/default ("+pLabel+")."))
 		}
 	}
 	return nil
+}
+
+// workspaceDisplayName returns the workspace name from the API, or id if lookup fails.
+func workspaceDisplayName(client *api.Client, workspaceID string) string {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return workspaceID
+	}
+	gw, err := client.GetWorkspace(workspaceID)
+	if err != nil || strings.TrimSpace(gw.Name) == "" {
+		return workspaceID
+	}
+	return strings.TrimSpace(gw.Name)
 }
 
 func isLikelyUUID(s string) bool {

@@ -8,6 +8,15 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
+// e2eBearerToken returns a bearer token when PKRE_E2E=1 and PKRE_E2E_CLIENT_KEY are set.
+// Used by integration tests when OS keychain cannot store keys for a temp HOME (e.g. CI).
+func e2eBearerToken() string {
+	if strings.TrimSpace(os.Getenv("PKRE_E2E")) != "1" {
+		return ""
+	}
+	return strings.TrimSpace(os.Getenv("PKRE_E2E_CLIENT_KEY"))
+}
+
 // CLIExeName is the binary name shown in error hints ("prke" or "promptkeeper"); set from cmd/root init.
 var CLIExeName = "prke"
 
@@ -181,6 +190,9 @@ func (c *Config) legacyAPIKey() string {
 
 // AuthTokenForExec prefers execution key, then management, then session (personal only), then legacy.
 func (c *Config) AuthTokenForExec() (string, error) {
+	if t := e2eBearerToken(); t != "" {
+		return t, nil
+	}
 	ws := c.CurrentWorkspaceID()
 	if ws != "" {
 		if k := GetSessionOverrideClientKey(ws); k != "" {
@@ -213,6 +225,9 @@ func (c *Config) AuthTokenForExec() (string, error) {
 
 // AuthTokenForManagement requires management or session (for personal workspace); execution-only in vault is rejected.
 func (c *Config) AuthTokenForManagement() (string, error) {
+	if t := e2eBearerToken(); t != "" {
+		return t, nil
+	}
 	ws := c.CurrentWorkspaceID()
 	if ws != "" {
 		if k := GetSessionOverrideClientKey(ws); k != "" {
@@ -248,6 +263,9 @@ func (c *Config) AuthTokenForManagement() (string, error) {
 // AuthForMintWorkspaceMgtKey returns a token that may call POST /v1/workspaces/:id/mgt-key (session or existing mgt).
 // A session token is accepted for any workspace the user belongs to; legacy single-slot keys are used only when no current workspace is set.
 func (c *Config) AuthForMintWorkspaceMgtKey() (string, error) {
+	if t := e2eBearerToken(); t != "" {
+		return t, nil
+	}
 	ws := c.CurrentWorkspaceID()
 	if ws == "" {
 		if k := c.legacyAPIKey(); k != "" {
@@ -271,9 +289,13 @@ func (c *Config) AuthForMintWorkspaceMgtKey() (string, error) {
 }
 
 // AuthSessionOrManagement returns a token for GET/POST /v1/workspaces* (session or management; not execution-only).
+//
+// Prefer the stored management key for the active workspace before the login session token. A stale session
+// from a prior login (still in the keychain) would otherwise be sent first and fail with 401 on the server
+// even though register just stored a valid pk_mgt_live_ key for this workspace.
 func (c *Config) AuthSessionOrManagement() (string, error) {
-	if s := c.GetSessionToken(); s != "" {
-		return s, nil
+	if t := e2eBearerToken(); t != "" {
+		return t, nil
 	}
 	ws := c.CurrentWorkspaceID()
 	if ws != "" {
@@ -283,6 +305,9 @@ func (c *Config) AuthSessionOrManagement() (string, error) {
 		if c.GetWorkspaceExecutionKey(ws) != "" {
 			return "", fmt.Errorf("execution-only key cannot access workspace APIs; use '%s login' or '%s workspace mint-mgt'", CLIExeName, CLIExeName)
 		}
+	}
+	if s := c.GetSessionToken(); s != "" {
+		return s, nil
 	}
 	if k := c.legacyAPIKey(); k != "" {
 		return k, nil
