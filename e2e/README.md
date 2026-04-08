@@ -21,6 +21,10 @@ Optional:
 - `--no-reset-db` — faster re-runs (same DB volume)
 - `E2E_RUN_EXEC=1` plus `E2E_OPENAI_API_KEY` / `E2E_GEMINI_API_KEY` / `E2E_ANTHROPIC_API_KEY` — enable §8–10 execute tests
 
+## Backend rate limit (E2E)
+
+Production default is **5 requests / 60s** per IP (`RATE_LIMIT_MAX_REQUESTS` / `RATE_LIMIT_WINDOW_SECS` unset). The E2E compose overlay (`docker-compose.e2e.yaml`) sets a higher cap so the full suite from one IP does not hit HTTP 429. Local `docker compose` without the overlay keeps the default 5/min.
+
 ## Layout
 
 | Path | Role |

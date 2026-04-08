@@ -26,3 +26,17 @@ class CliRegistrationCases(CliSuiteBase):
         if reg.get("api_key_scope") != "mgt":
             raise AssertionError(reg)
         print("OK: 1.2.1 CLI register with email/password")
+
+    def case_1_2_2_register_then_workspace_list_succeeds(self) -> None:
+        """After register, `workspace list` must succeed (stale session must not override new mgt key)."""
+        if self.shared is None:
+            raise AssertionError("CliSharedSession required")
+        self.shared.ensure_registered()
+        res = self.cli.run_json(["workspace", "list", "--json"], expect_json=True)
+        if res.returncode != 0:
+            raise AssertionError(f"workspace list after register failed: {res.stderr}")
+        data = res.json or {}
+        workspaces = data.get("workspaces")
+        if not isinstance(workspaces, list) or len(workspaces) < 1:
+            raise AssertionError(f"expected >=1 workspace, got {data}")
+        print("OK: 1.2.2 CLI register then workspace list")

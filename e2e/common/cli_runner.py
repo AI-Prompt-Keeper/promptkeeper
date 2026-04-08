@@ -37,6 +37,20 @@ class CliRunner:
         self.base_url = base_url
         self._home_ctx: Optional[tempfile.TemporaryDirectory] = None
         self._home_path: Optional[str] = None
+        self._e2e_client_key: Optional[str] = None
+
+    def set_e2e_client_key(self, key: str) -> None:
+        """After register, supply management key via env when OS keychain cannot (see PKRE_E2E in CLI)."""
+        k = (key or "").strip()
+        self._e2e_client_key = k if k else None
+
+    def _cli_env(self, home: str) -> dict:
+        env = dict(os.environ)
+        env["HOME"] = home
+        if self._e2e_client_key:
+            env["PKRE_E2E"] = "1"
+            env["PKRE_E2E_CLIENT_KEY"] = self._e2e_client_key
+        return env
 
     def _ensure_home(self) -> str:
         if self._home_path:
@@ -54,8 +68,7 @@ class CliRunner:
         home = self._ensure_home()
 
         cmd = [self.cli_bin, "--debug", "--use-local-config", *args]
-        env = dict(os.environ)
-        env["HOME"] = home
+        env = self._cli_env(home)
 
         p = subprocess.run(
             cmd,
@@ -84,8 +97,7 @@ class CliRunner:
         """Run CLI without requiring JSON on stdout (e.g. workspace list text)."""
         home = self._ensure_home()
         cmd = [self.cli_bin, "--debug", "--use-local-config", *args]
-        env = dict(os.environ)
-        env["HOME"] = home
+        env = self._cli_env(home)
         p = subprocess.run(
             cmd,
             env=env,

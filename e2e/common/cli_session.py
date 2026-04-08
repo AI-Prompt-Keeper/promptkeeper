@@ -33,6 +33,9 @@ class CliSharedSession:
         if not res.json:
             raise AssertionError(res.stdout)
         self._reg = res.json
+        api_key = self._reg.get("api_key")
+        if isinstance(api_key, str) and api_key:
+            self.runner.set_e2e_client_key(api_key)
         return self._reg
 
     @property

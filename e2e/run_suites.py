@@ -26,8 +26,26 @@ def _random_suffix(n: int = 8) -> str:
     return "".join(random.choice(alphabet) for _ in range(n))
 
 
+def _go_build_env() -> dict:
+    """Use a real module cache when Cursor/sandbox points Go at a broken truncated cache."""
+    env = os.environ.copy()
+    gmc = env.get("GOMODCACHE", "")
+    if "cursor-sandbox" in gmc or "sandbox-cache" in gmc:
+        home = os.path.expanduser("~")
+        env["GOMODCACHE"] = os.path.join(home, "go", "pkg", "mod")
+        if sys.platform == "darwin":
+            env["GOCACHE"] = os.path.join(home, "Library", "Caches", "go-build")
+        else:
+            env["GOCACHE"] = os.path.join(home, ".cache", "go-build")
+    return env
+
+
 def _build_cli(cli_dir: str, out_path: str) -> None:
-    subprocess.check_call(["go", "build", "-o", out_path, "."], cwd=cli_dir)
+    subprocess.check_call(
+        ["go", "build", "-o", out_path, "."],
+        cwd=cli_dir,
+        env=_go_build_env(),
+    )
 
 
 def _case_methods(suite_obj) -> Dict[str, Callable[[], None]]:
