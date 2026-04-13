@@ -81,7 +81,9 @@ impl RateLimiter {
     }
 }
 
-/// Axum middleware: rate limit all incoming requests by the client IP.
+/// Axum middleware: rate limit API requests by the client IP.
+///
+/// Paths under `/health` and `/metrics` are not counted (orchestrator polls share the client IP with tests).
 ///
 /// Note: this middleware uses `ConnectInfo<SocketAddr>` from request extensions.
 /// If it is missing (e.g. some unit tests), it falls back to `0.0.0.0`.
@@ -90,6 +92,13 @@ pub async fn rate_limit_middleware(
     req: Request<Body>,
     next: Next,
 ) -> Response {
+    // Do not count health/liveness/readiness or Prometheus scrapes against the API budget
+    // (E2E and orchestrators poll /health/ready frequently from the same IP as API tests).
+    let path = req.uri().path();
+    if path.starts_with("/health") || path == "/metrics" {
+        return next.run(req).await;
+    }
+
     let ip = req
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
