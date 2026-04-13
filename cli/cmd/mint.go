@@ -27,8 +27,9 @@ var mintKeyCmd = &cobra.Command{
 }
 
 func init() {
-	mintKeyCmd.Long = "Create a new execution key (the scope is limited to read and execute operations)" +
+	mintKeyCmd.Long = "Create a new execution key (the scope is limited to read and execute operations). " +
 		"The new key is shown only once. Use it in apps that should only run prompts, not manage provider keys or prompt templates.\n\n" +
+		"With no arguments, an interactive wizard prompts for an optional label.\n\n" +
 		"Example:  " + bin() + " mint key \"CI runner\""
 	rootCmd.AddCommand(mintCmd)
 	mintCmd.AddCommand(mintKeyCmd)
@@ -38,6 +39,11 @@ func runMintKey(cmd *cobra.Command, args []string) error {
 	label := ""
 	if len(args) >= 1 {
 		label = strings.TrimSpace(args[0])
+	} else {
+		if err := ui.FormMintExecutionKeyLabel(&label); err != nil {
+			return err
+		}
+		label = strings.TrimSpace(label)
 	}
 
 	cfg, err := config.New(rootDebug && rootUseLocalConfig)

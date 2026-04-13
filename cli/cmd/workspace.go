@@ -31,27 +31,38 @@ var workspaceListCmd = &cobra.Command{
 var workspaceSwitchMint bool
 
 var workspaceSwitchCmd = &cobra.Command{
-	Use:   "switch <name_or_id>",
+	Use:   "switch [name_or_id]",
 	Short: "Set the active workspace (UUID, name, or \"default\" for your personal workspace)",
-	Args:  cobra.ExactArgs(1),
+	Long: `Sets the active workspace used for keys, exec, and store.
+
+With no arguments, choose a workspace from an interactive list (arrow keys).`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
+		if len(args) < 1 {
+			return workspaceSwitchInteractive()
+		}
 		return doWorkspaceSwitch(args[0])
 	},
 }
 
 var workspaceCreateCmd = &cobra.Command{
-	Use:   "create <name>",
+	Use:   "create [name]",
 	Short: "Create a workspace (returns a new management key once)",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runWorkspaceCreate,
+	Long: `Creates a new workspace (POST /v1/workspaces). You receive a management API key once.
+
+With no arguments, an interactive wizard prompts for the workspace name.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runWorkspaceCreate,
 }
 
 var workspaceMintMgtCmd = &cobra.Command{
 	Use:   "mint-mgt [label]",
 	Short: "Mint a new management API key for the active workspace",
-	Long:  "Calls POST /v1/workspaces/:id/mgt-key. Requires a session (after login) or an existing management key. The new key is stored in the vault for the active workspace.",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runWorkspaceMintMgt,
+	Long: `Calls POST /v1/workspaces/:id/mgt-key. Requires a session (after login) or an existing management key. The new key is stored in the vault for the active workspace.
+
+With no arguments, an interactive wizard prompts for an optional label (default: CLI).`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runWorkspaceMintMgt,
 }
 
 var workspaceCurrentCmd = &cobra.Command{
@@ -75,16 +86,20 @@ Two arguments: non-interactive rename.`,
 }
 
 var workspaceDeleteCmd = &cobra.Command{
-	Use:   "delete <name_or_id>",
+	Use:   "delete [name_or_id]",
 	Short: "Delete a workspace (not allowed for the signup default or last workspace)",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runWorkspaceDelete,
+	Long: `Deletes a workspace (DELETE /v1/workspaces/:id).
+
+With no arguments, pick a workspace from an interactive list (arrow keys).`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runWorkspaceDelete,
 }
 
 // Root-level alias for tests / short usage.
 var mintMgtRootCmd = &cobra.Command{
 	Use:   "mint-mgt [label]",
 	Short: "Mint a management key for the active workspace (same as workspace mint-mgt)",
+	Long:  `Same as "workspace mint-mgt". With no arguments, an optional label is prompted interactively.`,
 	Args:  cobra.MaximumNArgs(1),
 	RunE:  runWorkspaceMintMgt,
 }
@@ -129,6 +144,63 @@ func runWorkspaceList(_ *cobra.Command, _ []string) error {
 		fmt.Fprintln(os.Stdout, w.Name)
 	}
 	return nil
+}
+
+func workspaceListAsPicks(client *api.Client) ([]ui.WorkspacePick, error) {
+	list, err := client.ListWorkspaces()
+	if err != nil {
+		return nil, err
+	}
+	picks := make([]ui.WorkspacePick, len(list.Workspaces))
+	for i, w := range list.Workspaces {
+		picks[i] = ui.WorkspacePick{ID: w.ID, Name: w.Name}
+	}
+	return picks, nil
+}
+
+func workspaceSwitchInteractive() error {
+	cfg, err := config.New(rootDebug && rootUseLocalConfig)
+	if err != nil {
+		PrintAPIError(os.Stderr, err.Error(), "Cannot load config.")
+		return err
+	}
+	token, err := cfg.AuthSessionOrManagement()
+	if err != nil {
+		PrintAPIError(os.Stderr, err.Error(), "")
+		return err
+	}
+	baseURL := cfg.BaseURL()
+	if rootDebug {
+		fmt.Fprintln(os.Stderr, ui.DebugLine("base URL: %s", baseURL))
+	}
+	client := api.NewClient(baseURL, token)
+	if rootDebug {
+		client.DebugLog = os.Stderr
+	}
+	picks, err := workspaceListAsPicks(client)
+	if err != nil {
+		usererr.PrintAPIError(os.Stderr, err.Error(), "")
+		return err
+	}
+	if len(picks) == 0 {
+		PrintFriendlyError(os.Stderr,
+			"No workspaces found.",
+			"Register or log in, then try again.",
+			[]string{bin() + " register", bin() + " login"})
+		return fmt.Errorf("no workspaces")
+	}
+	var selectedID string
+	if len(picks) > 0 {
+		selectedID = picks[0].ID
+	}
+	if err := ui.FormWorkspacePickFor(picks, &selectedID, ui.WorkspacePickPurposeSwitch); err != nil {
+		return err
+	}
+	selectedID = strings.TrimSpace(selectedID)
+	if selectedID == "" {
+		return fmt.Errorf("no workspace selected")
+	}
+	return doWorkspaceSwitch(selectedID)
 }
 
 func resolveWorkspaceSpecifier(cfg *config.Config, client *api.Client, raw string) (string, error) {
@@ -195,9 +267,18 @@ func doWorkspaceSwitch(raw string) error {
 }
 
 func runWorkspaceCreate(_ *cobra.Command, args []string) error {
-	name := strings.TrimSpace(args[0])
-	if name == "" {
-		return fmt.Errorf("name is required")
+	var name string
+	if len(args) >= 1 {
+		name = strings.TrimSpace(args[0])
+	} else {
+		if err := ui.FormWorkspaceCreateName(&name); err != nil {
+			return err
+		}
+		name = strings.TrimSpace(name)
+	}
+	if err := validate.ValidateWorkspaceName(name); err != nil {
+		PrintFriendlyError(os.Stderr, "Invalid workspace name.", err.Error(), []string{bin() + " workspace create \"My team\""})
+		return err
 	}
 	cfg, err := config.New(rootDebug && rootUseLocalConfig)
 	if err != nil {
@@ -232,8 +313,14 @@ func runWorkspaceCreate(_ *cobra.Command, args []string) error {
 		return err
 	}
 	fmt.Fprintln(os.Stdout)
+	wsLabel := strings.TrimSpace(resp.Name)
+	if wsLabel == "" {
+		wsLabel = resp.ID
+	} else {
+		wsLabel = wsLabel + " (" + resp.ID + ")"
+	}
 	fmt.Fprintln(os.Stdout, ui.WarningBlock("⚠️  IMPORTANT: Management key",
-		"Shown once. Stored in the vault for workspace "+resp.ID+".",
+		"Shown once. Stored in the vault for workspace "+wsLabel+".",
 		"Active workspace is set to this new workspace."))
 	return nil
 }
@@ -242,6 +329,14 @@ func runWorkspaceMintMgt(_ *cobra.Command, args []string) error {
 	label := "CLI"
 	if len(args) >= 1 {
 		label = strings.TrimSpace(args[0])
+	} else {
+		if err := ui.FormMintManagementKeyLabel(&label); err != nil {
+			return err
+		}
+		label = strings.TrimSpace(label)
+		if label == "" {
+			label = "CLI"
+		}
 	}
 	cfg, err := config.New(rootDebug && rootUseLocalConfig)
 	if err != nil {
@@ -347,21 +442,17 @@ func runWorkspaceEdit(_ *cobra.Command, args []string) error {
 				return err
 			}
 		} else {
-			list, err := client.ListWorkspaces()
+			picks, err := workspaceListAsPicks(client)
 			if err != nil {
 				usererr.PrintAPIError(os.Stderr, err.Error(), "")
 				return err
 			}
-			if len(list.Workspaces) == 0 {
+			if len(picks) == 0 {
 				PrintFriendlyError(os.Stderr,
 					"No workspaces found.",
 					"Register or log in, then try again.",
 					[]string{bin() + " register", bin() + " login"})
 				return fmt.Errorf("no workspaces")
-			}
-			picks := make([]ui.WorkspacePick, len(list.Workspaces))
-			for i, w := range list.Workspaces {
-				picks[i] = ui.WorkspacePick{ID: w.ID, Name: w.Name}
 			}
 			var selectedID string
 			if len(picks) > 0 {
@@ -415,9 +506,36 @@ func runWorkspaceDelete(_ *cobra.Command, args []string) error {
 	if rootDebug {
 		client.DebugLog = os.Stderr
 	}
-	wsID, err := resolveWorkspaceSpecifier(cfg, client, args[0])
-	if err != nil {
-		return err
+	var wsID string
+	if len(args) >= 1 {
+		wsID, err = resolveWorkspaceSpecifier(cfg, client, args[0])
+		if err != nil {
+			return err
+		}
+	} else {
+		picks, err := workspaceListAsPicks(client)
+		if err != nil {
+			usererr.PrintAPIError(os.Stderr, err.Error(), "")
+			return err
+		}
+		if len(picks) == 0 {
+			PrintFriendlyError(os.Stderr,
+				"No workspaces found.",
+				"Register or log in, then try again.",
+				[]string{bin() + " register", bin() + " login"})
+			return fmt.Errorf("no workspaces")
+		}
+		var selectedID string
+		if len(picks) > 0 {
+			selectedID = picks[0].ID
+		}
+		if err := ui.FormWorkspacePickFor(picks, &selectedID, ui.WorkspacePickPurposeDelete); err != nil {
+			return err
+		}
+		wsID = strings.TrimSpace(selectedID)
+		if wsID == "" {
+			return fmt.Errorf("no workspace selected")
+		}
 	}
 	cur := cfg.CurrentWorkspaceID()
 	if err := client.DeleteWorkspace(wsID); err != nil {

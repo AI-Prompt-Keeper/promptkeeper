@@ -8,6 +8,7 @@ import (
 	"github.com/promptkeeper/cli/internal/api"
 	"github.com/promptkeeper/cli/internal/config"
 	"github.com/promptkeeper/cli/internal/ui"
+	"github.com/promptkeeper/cli/internal/validate"
 	"github.com/spf13/cobra"
 )
 
@@ -17,18 +18,23 @@ var keyCmd = &cobra.Command{
 }
 
 var keyAliasCmd = &cobra.Command{
-	Use:   "alias <old_alias> <new_alias>",
+	Use:   "alias [old_alias] [new_alias]",
 	Short: "Rename a stored key alias for the active workspace",
-	Args:  cobra.ExactArgs(2),
-	RunE:  runKeyAlias,
+	Long: `Renames a key alias in local storage for the active workspace.
+
+With no arguments, both names are prompted. With one argument (old alias), only the new name is prompted.`,
+	Args: cobra.MaximumNArgs(2),
+	RunE: runKeyAlias,
 }
 
 var useCmd = &cobra.Command{
-	Use:   "use <alias_or_raw_client_key>",
+	Use:   "use [alias_or_raw_client_key]",
 	Short: "Set the default client key for the active workspace",
-	Long:  "If you pass a pk_mgt_live_ or pk_exe_live_ key, it is verified against POST /v1/auth/verify-client-key for the active workspace, then stored (or kept in-memory for this session only if secure storage is unavailable). If you pass an alias, it must already exist for this workspace (from a prior set).",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runUse,
+	Long: `If you pass a pk_mgt_live_ or pk_exe_live_ key, it is verified against POST /v1/auth/verify-client-key for the active workspace, then stored (or kept in-memory for this session only if secure storage is unavailable). If you pass an alias, it must already exist for this workspace (from a prior set).
+
+With no arguments, an interactive wizard prompts for the alias or key.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runUse,
 }
 
 func init() {
@@ -38,8 +44,34 @@ func init() {
 }
 
 func runKeyAlias(_ *cobra.Command, args []string) error {
-	oldA := strings.TrimSpace(args[0])
-	newA := strings.TrimSpace(args[1])
+	var oldA, newA string
+	switch len(args) {
+	case 2:
+		oldA = strings.TrimSpace(args[0])
+		newA = strings.TrimSpace(args[1])
+	case 1:
+		oldA = strings.TrimSpace(args[0])
+		if err := ui.FormKeyAliasNewAlias(&newA); err != nil {
+			return err
+		}
+		newA = strings.TrimSpace(newA)
+	case 0:
+		if err := ui.FormKeyAliasRename(&oldA, &newA); err != nil {
+			return err
+		}
+		oldA = strings.TrimSpace(oldA)
+		newA = strings.TrimSpace(newA)
+	default:
+		return fmt.Errorf("at most 2 arguments allowed")
+	}
+	if err := validate.ValidateKeyAlias(oldA); err != nil {
+		PrintFriendlyError(os.Stderr, "Invalid alias.", err.Error(), []string{bin() + " key alias old new"})
+		return err
+	}
+	if err := validate.ValidateKeyAlias(newA); err != nil {
+		PrintFriendlyError(os.Stderr, "Invalid alias.", err.Error(), []string{bin() + " key alias old new"})
+		return err
+	}
 	cfg, err := config.New(rootDebug && rootUseLocalConfig)
 	if err != nil {
 		PrintAPIError(os.Stderr, err.Error(), "")
@@ -59,7 +91,19 @@ func runKeyAlias(_ *cobra.Command, args []string) error {
 }
 
 func runUse(_ *cobra.Command, args []string) error {
-	arg := strings.TrimSpace(args[0])
+	var arg string
+	if len(args) >= 1 {
+		arg = strings.TrimSpace(args[0])
+	} else {
+		if err := ui.FormUseClientKey(&arg); err != nil {
+			return err
+		}
+		arg = strings.TrimSpace(arg)
+	}
+	if arg == "" {
+		PrintFriendlyError(os.Stderr, "Alias or key is required.", "", []string{bin() + " use my_alias"})
+		return fmt.Errorf("missing alias or key")
+	}
 	cfg, err := config.New(rootDebug && rootUseLocalConfig)
 	if err != nil {
 		PrintAPIError(os.Stderr, err.Error(), "")

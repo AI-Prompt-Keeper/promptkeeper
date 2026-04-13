@@ -24,6 +24,7 @@ const (
 	MaxFilePathLen      = 4096
 	MaxModelLen         = 128
 	MaxWorkspaceNameLen = 256
+	MaxKeyAliasLen      = 256
 )
 
 // Allowed characters for identifiers (provider)
@@ -73,6 +74,18 @@ func ValidateWorkspaceName(s string) error {
 	}
 	if utf8.RuneCountInString(s) > MaxWorkspaceNameLen {
 		return fmt.Errorf("workspace name must be at most %d characters", MaxWorkspaceNameLen)
+	}
+	return nil
+}
+
+// ValidateKeyAlias validates a CLI key alias (non-empty, length cap).
+func ValidateKeyAlias(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fmt.Errorf("alias is required")
+	}
+	if utf8.RuneCountInString(s) > MaxKeyAliasLen {
+		return fmt.Errorf("alias must be at most %d characters", MaxKeyAliasLen)
 	}
 	return nil
 }
