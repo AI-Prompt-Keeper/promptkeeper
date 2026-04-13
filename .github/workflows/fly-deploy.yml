@@ -1,4 +1,4 @@
-# Deploy Prompt Keeper backend to Fly.io on every push to main.
+# Deploy Prompt Keeper backend to Fly.io on every push to main when backend/, service/, or console/ changes.
 # Required: Repository secret FLY_API_TOKEN (create with: fly tokens create deploy -x 999999h).
 
 name: Fly Deploy
@@ -9,6 +9,8 @@ on:
       - main
     paths:
       - 'backend/**'
+      - 'service/**'
+      - 'console/**'
 
 jobs:
   deploy:
