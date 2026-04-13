@@ -16,7 +16,7 @@ import (
 var registerCmd = &cobra.Command{
 	Use:   "register [email] [password]",
 	Short: "Register a new user",
-	Long:  "Registers a new user with the Secure AI Gateway. On success, stores the management API key (pk_mgt_live_...) in the system vault. You must persist it somewhere secure—it is returned only once. If email or password are omitted, an interactive form will guide you.",
+	Long:  "Registers a new user with the Secure AI Gateway. Creates a default (personal) workspace and stores the management API key (pk_mgt_live_...) in the OS secure store for that workspace. The key is returned only once. If email or password are omitted, an interactive form will guide you.",
 	Args: cobra.MaximumNArgs(2),
 	RunE: runRegister,
 }
@@ -82,10 +82,25 @@ func runRegister(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	apiKey, _ := resp["api_key"].(string)
-	if apiKey != "" {
+	apiKey := jsonMapString(resp, "api_key")
+	defWS := jsonMapString(resp, "default_workspace_id")
+	userID := jsonMapString(resp, "id")
+	if defWS != "" && userID != "" {
+		if err := cfg.SetPersonalWorkspaceAndSessionUser(defWS, userID); err != nil {
+			fmt.Fprintln(os.Stderr, ui.WarningBlock("Warning", "Could not save workspace state: "+err.Error()))
+		}
+		if err := cfg.SetCurrentWorkspaceID(defWS); err != nil {
+			fmt.Fprintln(os.Stderr, ui.WarningBlock("Warning", "Could not set active workspace: "+err.Error()))
+		}
+	}
+	if apiKey != "" && defWS != "" {
+		cfg.SetWorkspaceManagementKey(defWS, apiKey)
+		_ = cfg.ClearLegacyAPIKey()
+		// New account: drop any prior login session so workspace APIs use the new management key, not a stale session.
+		_ = cfg.ClearSessionToken()
+	} else if apiKey != "" {
 		if err := cfg.SetAPIKey(apiKey); err != nil {
-			fmt.Fprintln(os.Stderr, ui.WarningBlock("Warning", "Could not store API key in vault: "+err.Error()))
+			fmt.Fprintln(os.Stderr, ui.WarningBlock("Warning", "Could not store API key: "+err.Error()))
 		}
 	}
 
@@ -105,4 +120,17 @@ func runRegister(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func jsonMapString(m map[string]interface{}, key string) string {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		return strings.TrimSpace(t)
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", t))
+	}
 }

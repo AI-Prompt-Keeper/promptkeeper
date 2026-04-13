@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"strings"
 
 	"charm.land/huh/v2"
 	"github.com/promptkeeper/cli/internal/validate"
@@ -21,7 +22,8 @@ func FormRegister(email *string, password *string) error {
 					Validate(func(s string) error {
 						return validate.ValidatePassword(s)
 					}),
-			),
+			).Title("Register").
+				Description("Create a Prompt Keeper account and default workspace."),
 		).Run()
 	}
 	return huh.NewForm(
@@ -39,7 +41,45 @@ func FormRegister(email *string, password *string) error {
 				Validate(func(s string) error {
 					return validate.ValidatePassword(s)
 				}),
-		),
+		).Title("Register").
+			Description("Create a Prompt Keeper account and default workspace."),
+	).Run()
+}
+
+// FormLogin collects email and password for login (same layout as registration).
+// If email is non-empty, only password is asked.
+func FormLogin(email *string, password *string) error {
+	if *email != "" {
+		return huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("Password").
+					Password(true).
+					Value(password).
+					Validate(func(s string) error {
+						return validate.ValidatePassword(s)
+					}),
+			).Title("Sign in").
+				Description("Authenticate with your email and password."),
+		).Run()
+	}
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Email").
+				Value(email).
+				Validate(func(s string) error {
+					return validate.ValidateEmail(s)
+				}),
+			huh.NewInput().
+				Title("Password").
+				Password(true).
+				Value(password).
+				Validate(func(s string) error {
+					return validate.ValidatePassword(s)
+				}),
+		).Title("Sign in").
+			Description("Authenticate with your email and password."),
 	).Run()
 }
 
@@ -49,6 +89,7 @@ func FormSetAPIKey(key *string) error {
 		huh.NewGroup(
 			huh.NewInput().
 				Title("API key").
+				Description("Management key (pk_mgt_live_...), execution key, or 64-char session token.").
 				Password(true).
 				Value(key).
 				Validate(func(s string) error {
@@ -57,7 +98,8 @@ func FormSetAPIKey(key *string) error {
 					}
 					return nil
 				}),
-		),
+		).Title("Set Prompt Keeper client key").
+			Description("Stored in the OS secure store for the active workspace."),
 	).Run()
 }
 
@@ -80,7 +122,8 @@ func FormStoreKind(kind *StoreKind) error {
 					huh.NewOption("Prompt template", StoreKindPrompt),
 				).
 				Value(kind),
-		),
+		).Title("Store").
+			Description("Guided flow for provider keys or prompt templates."),
 	).Run()
 }
 
@@ -107,7 +150,8 @@ func FormStoreKey(provider *string, apiKey *string) error {
 					}
 					return validate.ValidateInputLength(s, "api_key")
 				}),
-		),
+		).Title("Store provider API key").
+			Description("Sent to the Secure AI Gateway with envelope encryption."),
 	).Run()
 }
 
@@ -150,6 +194,116 @@ func FormStorePrompt(title *string, promptValue *string, provider *string, model
 	).Run()
 }
 
+// WorkspacePick is one workspace row for interactive rename (id + display name).
+type WorkspacePick struct {
+	ID   string
+	Name string
+}
+
+// WorkspacePickPurpose selects copy for the workspace picker (rename / switch / delete).
+type WorkspacePickPurpose int
+
+const (
+	WorkspacePickPurposeRename WorkspacePickPurpose = iota
+	WorkspacePickPurposeSwitch
+	WorkspacePickPurposeDelete
+)
+
+// FormWorkspacePick lists workspaces in a select field (arrow keys, Enter to confirm).
+func FormWorkspacePick(workspaces []WorkspacePick, selectedID *string) error {
+	return FormWorkspacePickFor(workspaces, selectedID, WorkspacePickPurposeRename)
+}
+
+// FormWorkspacePickFor lists workspaces with flow-specific titles (rename, switch, or delete).
+func FormWorkspacePickFor(workspaces []WorkspacePick, selectedID *string, purpose WorkspacePickPurpose) error {
+	if len(workspaces) == 0 {
+		return errors.New("no workspaces to choose from")
+	}
+	opts := make([]huh.Option[string], 0, len(workspaces))
+	for _, w := range workspaces {
+		label := strings.TrimSpace(w.Name)
+		if label == "" {
+			label = w.ID
+		}
+		opts = append(opts, huh.NewOption(label, w.ID))
+	}
+	var formTitle, formDesc, selectTitle string
+	switch purpose {
+	case WorkspacePickPurposeRename:
+		formTitle = "Rename workspace"
+		formDesc = "No active workspace is set — pick one to rename."
+		selectTitle = "Which workspace do you want to rename?"
+	case WorkspacePickPurposeSwitch:
+		formTitle = "Switch workspace"
+		formDesc = "Choose the workspace to make active for CLI commands."
+		selectTitle = "Which workspace do you want to switch to?"
+	case WorkspacePickPurposeDelete:
+		formTitle = "Delete workspace"
+		formDesc = "This cannot be undone. Pick the workspace to remove."
+		selectTitle = "Which workspace do you want to delete?"
+	default:
+		formTitle = "Workspace"
+		formDesc = "Pick a workspace."
+		selectTitle = "Workspace"
+	}
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title(selectTitle).
+				Description("↑/↓ to move, Enter to select.").
+				Options(opts...).
+				Value(selectedID).
+				Validate(func(s string) error {
+					if strings.TrimSpace(s) == "" {
+						return errors.New("please select a workspace")
+					}
+					return nil
+				}),
+		).Title(formTitle).
+			Description(formDesc),
+	).Run()
+}
+
+// FormWorkspaceCreateName asks for the name of a new workspace (same huh styling as rename flows).
+func FormWorkspaceCreateName(name *string) error {
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Workspace name").
+				Description("Choose a display name. You will receive a management API key once (shown and stored locally).").
+				Value(name).
+				Validate(func(s string) error {
+					return validate.ValidateWorkspaceName(s)
+				}),
+		).Title("Create workspace").
+			Description("Adds a new workspace to your account (POST /v1/workspaces)."),
+	).Run()
+}
+
+// FormWorkspaceNewName asks for the new display name; currentLabel is shown as context (e.g. current name).
+func FormWorkspaceNewName(currentLabel, workspaceID string, newName *string) error {
+	desc := strings.TrimSpace(currentLabel)
+	if desc == "" {
+		desc = workspaceID
+	}
+	sub := "Current: " + desc
+	if strings.TrimSpace(workspaceID) != "" {
+		sub += "\nID: " + strings.TrimSpace(workspaceID)
+	}
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("New workspace name").
+				Description(sub).
+				Value(newName).
+				Validate(func(s string) error {
+					return validate.ValidateWorkspaceName(s)
+				}),
+		).Title("Rename workspace").
+			Description("Enter the new display name for this workspace."),
+	).Run()
+}
+
 // FormExec collects prompt title and optional variables (as key=value lines).
 func FormExec(promptTitle *string, varLines *string) error {
 	return huh.NewForm(
@@ -163,6 +317,88 @@ func FormExec(promptTitle *string, varLines *string) error {
 			huh.NewText().
 				Title("Variables (optional, one per line: key=value)").
 				Value(varLines),
-		),
+		).Title("Run prompt").
+			Description("Streams the model response to stdout (GET/execute flow)."),
+	).Run()
+}
+
+// FormKeyAliasRename collects old and new alias names (interactive key alias rename).
+func FormKeyAliasRename(oldAlias, newAlias *string) error {
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Current alias").
+				Value(oldAlias).
+				Validate(func(s string) error {
+					return validate.ValidateKeyAlias(s)
+				}),
+			huh.NewInput().
+				Title("New alias").
+				Value(newAlias).
+				Validate(func(s string) error {
+					return validate.ValidateKeyAlias(s)
+				}),
+		).Title("Rename key alias").
+			Description("Per-workspace aliases for stored client keys (CLI-only)."),
+	).Run()
+}
+
+// FormKeyAliasNewAlias asks only for the new alias (when old alias was given on the command line).
+func FormKeyAliasNewAlias(newAlias *string) error {
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("New alias").
+				Value(newAlias).
+				Validate(func(s string) error {
+					return validate.ValidateKeyAlias(s)
+				}),
+		).Title("Rename key alias").
+			Description("Choose the new alias name."),
+	).Run()
+}
+
+// FormUseClientKey collects an alias or raw pk_* key for prke use.
+func FormUseClientKey(aliasOrKey *string) error {
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Alias or client key").
+				Description("An existing alias, or pk_mgt_live_... / pk_exe_live_... (verified for the active workspace).").
+				Value(aliasOrKey).
+				Validate(func(s string) error {
+					if strings.TrimSpace(s) == "" {
+						return errors.New("value is required")
+					}
+					return nil
+				}),
+		).Title("Default client key").
+			Description("Sets the default key for the active workspace."),
+	).Run()
+}
+
+// FormMintExecutionKeyLabel collects an optional label for a minted execution key.
+func FormMintExecutionKeyLabel(label *string) error {
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Label (optional)").
+				Description("Shown in workspace token lists. Leave blank to use the server default.").
+				Value(label),
+		).Title("Mint execution key").
+			Description("Creates an execution-only client key (pk_exe_live_...) for the active workspace."),
+	).Run()
+}
+
+// FormMintManagementKeyLabel collects an optional label for POST .../mgt-key.
+func FormMintManagementKeyLabel(label *string) error {
+	return huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("Label (optional)").
+				Description("Shown in workspace token lists. Leave blank to use \"CLI\" as default.").
+				Value(label),
+		).Title("Mint management key").
+			Description("Creates a new management key for the active workspace."),
 	).Run()
 }

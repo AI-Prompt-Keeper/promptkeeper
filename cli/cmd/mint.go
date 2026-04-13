@@ -27,8 +27,9 @@ var mintKeyCmd = &cobra.Command{
 }
 
 func init() {
-	mintKeyCmd.Long = "Calls POST /v1/auth/api-tokens using the Prompt Keeper API key from your vault (must be a management key pk_mgt_live_..., or use a session token from login — not an execution-only key).\n\n" +
+	mintKeyCmd.Long = "Create a new execution key (the scope is limited to read and execute operations). " +
 		"The new key is shown only once. Use it in apps that should only run prompts, not manage provider keys or prompt templates.\n\n" +
+		"With no arguments, an interactive wizard prompts for an optional label.\n\n" +
 		"Example:  " + bin() + " mint key \"CI runner\""
 	rootCmd.AddCommand(mintCmd)
 	mintCmd.AddCommand(mintKeyCmd)
@@ -38,6 +39,11 @@ func runMintKey(cmd *cobra.Command, args []string) error {
 	label := ""
 	if len(args) >= 1 {
 		label = strings.TrimSpace(args[0])
+	} else {
+		if err := ui.FormMintExecutionKeyLabel(&label); err != nil {
+			return err
+		}
+		label = strings.TrimSpace(label)
 	}
 
 	cfg, err := config.New(rootDebug && rootUseLocalConfig)
@@ -49,9 +55,9 @@ func runMintKey(cmd *cobra.Command, args []string) error {
 	if rootDebug {
 		fmt.Fprintln(os.Stderr, ui.DebugLine("base URL: %s", baseURL))
 	}
-	token, err := cfg.GetAPIKey()
+	token, err := cfg.AuthTokenForMintExecutionKey()
 	if err != nil {
-		PrintAPIError(os.Stderr, err.Error(), "Run '"+bin()+" register' or '"+bin()+" set prke_key <management key>' first.")
+		PrintAPIError(os.Stderr, err.Error(), "Use a management key or session (personal workspace), or run '"+bin()+" workspace mint-mgt'.")
 		return err
 	}
 	client := api.NewClient(baseURL, token)
@@ -76,9 +82,15 @@ func runMintKey(cmd *cobra.Command, args []string) error {
 		PrintAPIError(os.Stderr, "Failed to print response: "+err.Error(), "")
 		return err
 	}
+	if resp.APIKey != "" {
+		ws := cfg.CurrentWorkspaceID()
+		if ws != "" {
+			cfg.SetWorkspaceExecutionKey(ws, resp.APIKey)
+		}
+	}
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, ui.WarningBlock("⚠️  IMPORTANT: Store this execution key securely",
-		"It is shown only once. Prefer a secret manager or environment variable.",
-		"Do not commit it to source control. To save it in the CLI vault (replaces your current vault key), run: "+bin()+" set prke_key <key>"))
+		"It is shown only once. Saved to the vault for the active workspace when storage is available.",
+		"Otherwise copy it manually. To set later: "+bin()+" set prke_key <pk_exe_live_...> (with the right workspace active)."))
 	return nil
 }

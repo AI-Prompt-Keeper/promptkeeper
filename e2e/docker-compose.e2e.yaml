@@ -1,0 +1,10 @@
+# E2E overlay: mount workspace `service/` at /service (path ../service was wrong: resolved from
+# repo-root compose file as parent/service, not repo/service).
+services:
+  backend:
+    environment:
+      # Higher cap than production default (5/min) so one client IP can run E2E without 429s.
+      RATE_LIMIT_MAX_REQUESTS: "120"
+      RATE_LIMIT_WINDOW_SECS: "60"
+    volumes:
+      - ./service:/service:ro

@@ -39,9 +39,9 @@ func runListPrompts(_ *cobra.Command, _ []string) error {
 	if rootDebug {
 		fmt.Fprintln(os.Stderr, ui.DebugLine("base URL: %s", baseURL))
 	}
-	token, err := cfg.GetAPIKey()
+	token, err := cfg.AuthTokenForExec()
 	if err != nil {
-		PrintAPIError(os.Stderr, err.Error(), "Run '"+bin()+" register' or '"+bin()+" set prke_key <key>' first.")
+		PrintAPIError(os.Stderr, err.Error(), "Run '"+bin()+" login', '"+bin()+" register', or '"+bin()+" set prke_key <key>'.")
 		return err
 	}
 	client := api.NewClient(baseURL, token)

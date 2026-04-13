@@ -26,6 +26,7 @@ var promptCmd = &cobra.Command{
 func init() {
 	StoreCmd.AddCommand(promptCmd)
 	promptCmd.Flags().StringVar(&storePromptModel, "model", "", "Preferred LLM model for this prompt (e.g. gpt-4o, claude-3-5-sonnet)")
+	promptCmd.Flags().StringVar(&storeClientKeyFlag, "key", "", "Optional client API key or alias (verified for active workspace via verify-client-key)")
 }
 
 func runStorePrompt(cmd *cobra.Command, args []string) error {
@@ -97,11 +98,11 @@ func runStorePrompt(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return DoStorePrompt(cmd, title, promptValue, provider, model)
+	return DoStorePrompt(cmd, title, promptValue, provider, model, storeClientKeyFlag)
 }
 
 // DoStorePrompt performs the API call to store a prompt. Caller must have resolved promptInput to promptValue (file read if path).
-func DoStorePrompt(cmd *cobra.Command, title, promptValue, provider, model string) error {
+func DoStorePrompt(cmd *cobra.Command, title, promptValue, provider, model, clientKeyOpt string) error {
 	b := getBin(cmd)
 	useLocalConfig := getUseLocalConfig(cmd)
 	cfg, err := config.New(useLocalConfig)
@@ -109,7 +110,7 @@ func DoStorePrompt(cmd *cobra.Command, title, promptValue, provider, model strin
 		usererr.PrintAPIError(os.Stderr, err.Error(), "Cannot load config (e.g. home directory).")
 		return err
 	}
-	token, err := cfg.GetAPIKey()
+	token, err := resolveAuthToken(cmd, cfg, clientKeyOpt)
 	if err != nil {
 		usererr.PrintAPIError(os.Stderr, err.Error(), "Run '"+b+" register' or '"+b+" set prke_key <key>' first to set your API key.")
 		return err

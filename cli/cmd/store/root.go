@@ -49,7 +49,7 @@ func runStoreGuided(cmd *cobra.Command, args []string) error {
 		}
 		provider = strings.TrimSpace(provider)
 		apiKey = strings.TrimSpace(apiKey)
-		return DoStoreKey(cmd, provider, apiKey)
+		return DoStoreKey(cmd, provider, apiKey, "")
 	case ui.StoreKindPrompt:
 		var title, promptInput, provider, model string
 		if err := ui.FormStorePrompt(&title, &promptInput, &provider, &model); err != nil {
@@ -70,7 +70,7 @@ func runStoreGuided(cmd *cobra.Command, args []string) error {
 		} else {
 			promptValue = promptInput
 		}
-		return DoStorePrompt(cmd, title, promptValue, provider, model)
+		return DoStorePrompt(cmd, title, promptValue, provider, model, "")
 	default:
 		return nil
 	}

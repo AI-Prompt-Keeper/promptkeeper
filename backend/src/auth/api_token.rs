@@ -58,6 +58,7 @@ fn reject_execution_key(method: &Method, path: &str) -> Option<(StatusCode, axum
 }
 
 /// Validate scoped client API token against api_tokens. Returns (user_id, workspace_id, scope) if valid.
+/// Session tokens (64 hex) and unknown shapes return `Ok(None)`.
 async fn validate_api_token(
     pool: &PgPool,
     token: &str,
@@ -95,8 +96,18 @@ async fn validate_api_token(
     }))
 }
 
+/// Resolve a Prompt Keeper client key (`pk_mgt_live_` / `pk_exe_live_`) to its workspace and scope.
+/// Used for explicit key↔workspace checks (e.g. CLI raw key). Returns `None` if invalid or not a client key.
+pub(crate) async fn resolve_client_api_token(
+    pool: &PgPool,
+    token: &str,
+) -> Result<Option<(Uuid, Uuid, ApiKeyScope)>, sqlx::Error> {
+    validate_api_token(pool, token.trim()).await
+}
+
 /// Get user's first workspace (for session auth which has no workspace binding).
-async fn default_workspace_for_user(pool: &PgPool, user_id: Uuid) -> Result<Option<Uuid>, sqlx::Error> {
+/// Same ordering as signup default: first `workspace_members` row by `created_at`.
+pub(crate) async fn default_workspace_for_user(pool: &PgPool, user_id: Uuid) -> Result<Option<Uuid>, sqlx::Error> {
     let row = sqlx::query_scalar::<_, Uuid>(
         "SELECT workspace_id FROM workspace_members WHERE user_id = $1 ORDER BY created_at LIMIT 1",
     )

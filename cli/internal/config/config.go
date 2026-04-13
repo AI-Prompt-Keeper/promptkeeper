@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
-	"github.com/zalando/go-keyring"
 )
 
 const (
@@ -23,6 +22,8 @@ const (
 type Config struct {
 	v              *viper.Viper
 	useLocalConfig bool
+	home           string
+	state          *PrkeState
 }
 
 // New creates and initializes config. useLocalConfig should be true only when both --debug and --use-local-config are set.
@@ -41,7 +42,12 @@ func New(useLocalConfig bool) (*Config, error) {
 		_ = v.ReadInConfig() // ignore if file does not exist
 	}
 
-	return &Config{v: v, useLocalConfig: useLocalConfig}, nil
+	st, err := loadPrkeState(home)
+	if err != nil {
+		return nil, fmt.Errorf("load workspace state: %w", err)
+	}
+
+	return &Config{v: v, useLocalConfig: useLocalConfig, home: home, state: st}, nil
 }
 
 // BaseURL resolves the API base URL:
@@ -69,23 +75,38 @@ func (c *Config) SetBaseURL(url string) error {
 	return c.writeConfig()
 }
 
-// GetAPIKey returns api_key from system keyring only (never from config file, to avoid exposing secrets on disk).
+// GetAPIKey returns a credential suitable for management-style API calls (store, mint execution, workspaces).
 func (c *Config) GetAPIKey() (string, error) {
-	token, err := keyring.Get(ServiceName, KeyUser)
-	if err == nil && token != "" {
-		return token, nil
-	}
-	return "", fmt.Errorf("no API key found: run 'prke register' or 'prke set prke_key <key>'")
+	return c.AuthTokenForManagement()
 }
 
-// SetAPIKey stores api_key in system keyring only. Config file is not used for the token.
+// SetAPIKey stores a client key or session: per-workspace vault when current workspace is set, otherwise legacy single-slot keyring.
 func (c *Config) SetAPIKey(apiKey string) error {
-	return keyring.Set(ServiceName, KeyUser, apiKey)
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return fmt.Errorf("API key is empty")
+	}
+	ws := c.CurrentWorkspaceID()
+	switch {
+	case strings.HasPrefix(apiKey, "pk_exe_live_") && ws != "":
+		c.SetWorkspaceExecutionKey(ws, apiKey)
+		return nil
+	case strings.HasPrefix(apiKey, "pk_mgt_live_") && ws != "":
+		c.SetWorkspaceManagementKey(ws, apiKey)
+		return nil
+	case LooksLikeSessionToken(apiKey):
+		c.SetSessionToken(apiKey)
+		return nil
+	default:
+		// Unknown shape: store as legacy (backward compatibility).
+		setKeyringSecret(os.Stderr, os.Stdout, KeyUser, apiKey, "API key")
+		return nil
+	}
 }
 
-// DeleteAPIKey removes api_key from system keyring only.
+// DeleteAPIKey removes the legacy single-slot key only (not per-workspace or session entries).
 func (c *Config) DeleteAPIKey() error {
-	return keyring.Delete(ServiceName, KeyUser)
+	return c.ClearLegacyAPIKey()
 }
 
 func (c *Config) writeConfig() error {

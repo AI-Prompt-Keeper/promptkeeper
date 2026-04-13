@@ -12,17 +12,19 @@ import (
 
 // Security limits - assume malicious intent, do not trust user input
 const (
-	MaxEmailLen     = 320
-	MaxPasswordLen  = 256
-	MinPasswordLen  = 12
-	MaxInputLen     = 64 * 1024 // 64KB for prompts/secrets
-	MaxProviderLen  = 64
-	MaxPromptTitle  = 256
-	MaxVarKeyLen    = 128
-	MaxVarValueLen  = 4096
-	MaxVarPairs     = 32
-	MaxFilePathLen  = 4096
-	MaxModelLen     = 128
+	MaxEmailLen         = 320
+	MaxPasswordLen      = 256
+	MinPasswordLen      = 12
+	MaxInputLen         = 64 * 1024 // 64KB for prompts/secrets
+	MaxProviderLen      = 64
+	MaxPromptTitle      = 256
+	MaxVarKeyLen        = 128
+	MaxVarValueLen      = 4096
+	MaxVarPairs         = 32
+	MaxFilePathLen      = 4096
+	MaxModelLen         = 128
+	MaxWorkspaceNameLen = 256
+	MaxKeyAliasLen      = 256
 )
 
 // Allowed characters for identifiers (provider)
@@ -60,6 +62,30 @@ func ValidatePassword(password string) error {
 	}
 	if utf8.RuneCountInString(password) > MaxPasswordLen {
 		return fmt.Errorf("password exceeds maximum length")
+	}
+	return nil
+}
+
+// ValidateWorkspaceName validates a workspace display name for PATCH /v1/workspaces/:id.
+func ValidateWorkspaceName(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fmt.Errorf("workspace name is required")
+	}
+	if utf8.RuneCountInString(s) > MaxWorkspaceNameLen {
+		return fmt.Errorf("workspace name must be at most %d characters", MaxWorkspaceNameLen)
+	}
+	return nil
+}
+
+// ValidateKeyAlias validates a CLI key alias (non-empty, length cap).
+func ValidateKeyAlias(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fmt.Errorf("alias is required")
+	}
+	if utf8.RuneCountInString(s) > MaxKeyAliasLen {
+		return fmt.Errorf("alias must be at most %d characters", MaxKeyAliasLen)
 	}
 	return nil
 }

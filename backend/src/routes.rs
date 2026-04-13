@@ -1,18 +1,17 @@
 //! HTTP routes for the LLM proxy and secure Put (envelope encryption).
 
+mod workspaces;
+
 use axum::{
     body::Bytes,
-    extract::{ConnectInfo, Extension, FromRef, Query, State},
+    extract::{Extension, FromRef, Query, State},
     http::{HeaderMap, StatusCode},
     middleware,
     response::sse::{Event, Sse},
     routing::{get, post},
     Json, Router,
 };
-use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
-use std::sync::RwLock;
 use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use futures_util::Stream;
@@ -86,29 +85,22 @@ struct ListPromptsResponse {
     titles: Vec<String>,
 }
 
-/// In-memory rate limiter: one register per IP per window (e.g. 3 minutes).
-#[derive(Default)]
-pub struct RegisterRateLimiter {
-    last_by_ip: RwLock<HashMap<String, Instant>>,
-}
+// Rate limiting is handled globally by `promptkeeper_service::rate_limit` middleware (see `app_router`).
 
-const REGISTER_RATE_WINDOW: Duration = Duration::from_secs(3 * 60); // 3 minutes
-
-impl RegisterRateLimiter {
-    /// Returns true if the request is allowed, false if rate limited. Records the attempt when allowed.
-    pub fn check_and_record(&self, ip: &str) -> bool {
-        let now = Instant::now();
-        let mut map = self.last_by_ip.write().expect("register rate limiter lock");
-        // Prune expired entries to avoid unbounded growth
-        map.retain(|_, t| now.saturating_duration_since(*t) <= REGISTER_RATE_WINDOW);
-        if let Some(&last) = map.get(ip) {
-            if now.saturating_duration_since(last) < REGISTER_RATE_WINDOW {
-                return false;
-            }
-        }
-        map.insert(ip.to_string(), now);
-        true
-    }
+/// Global IP rate limit for API routes (health/metrics are exempt in middleware).
+/// Defaults: **5** requests per **60** seconds. E2E raises the cap via `docker-compose.e2e.yaml`
+/// (`RATE_LIMIT_MAX_REQUESTS` / `RATE_LIMIT_WINDOW_SECS`).
+fn rate_limiter_from_env() -> promptkeeper_service::rate_limit::RateLimiter {
+    let max = std::env::var("RATE_LIMIT_MAX_REQUESTS")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(5);
+    let window_secs = std::env::var("RATE_LIMIT_WINDOW_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(60);
+    let window = Duration::from_secs(window_secs.max(1));
+    promptkeeper_service::rate_limit::RateLimiter::new(max, window)
 }
 
 // --- Proof-of-Work for register ---
@@ -176,43 +168,6 @@ async fn register_challenge_handler() -> Json<RegisterChallengeResponse> {
     })
 }
 
-/// Client IP from X-Forwarded-For (first client) or X-Real-IP.
-fn client_ip_from_headers(headers: &HeaderMap) -> Option<String> {
-    if let Some(v) = headers.get("x-forwarded-for") {
-        if let Ok(s) = v.to_str() {
-            let first = s.split(',').next().map(str::trim).unwrap_or("").to_string();
-            if !first.is_empty() {
-                return Some(first);
-            }
-        }
-    }
-    if let Some(v) = headers.get("x-real-ip") {
-        if let Ok(s) = v.to_str() {
-            let s = s.trim();
-            if !s.is_empty() {
-                return Some(s.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// IP key for registration rate limiting. Public peers cannot spoof `X-Forwarded-For`; private/LB peers use forwarded IP.
-fn client_ip_for_rate_limit(peer: SocketAddr, headers: &HeaderMap) -> String {
-    if peer.ip().is_loopback() {
-        return peer.ip().to_string();
-    }
-    let trust_forwarded = match peer.ip() {
-        IpAddr::V4(v4) => v4.is_private() || v4.is_link_local(),
-        IpAddr::V6(v6) => v6.is_unique_local(),
-    };
-    if trust_forwarded {
-        client_ip_from_headers(headers).unwrap_or_else(|| peer.ip().to_string())
-    } else {
-        peer.ip().to_string()
-    }
-}
-
 /// Application state: execute pipeline + optional envelope encryption and Put service.
 #[derive(Clone)]
 pub struct AppState {
@@ -223,8 +178,6 @@ pub struct AppState {
     pub put_service: Option<Arc<PutFunctionService>>,
     /// Shared Postgres connection pool.
     pub db: sqlx::PgPool,
-    /// Rate limiter for register: 1 IP per 3 minutes.
-    pub register_rate_limiter: Arc<RegisterRateLimiter>,
     /// Async analytics reporter (PostHog) with a dedicated worker thread.
     pub analytics: AnalyticsReporter,
     /// Prometheus scrape handle (`GET /metrics`).
@@ -271,7 +224,6 @@ pub async fn app_router(
         enveloper: secrets.clone(),
     };
 
-    let register_rate_limiter = Arc::new(RegisterRateLimiter::default());
     let analytics = AnalyticsReporter::from_env();
     let readiness = Arc::new(ReadinessState { config_loaded });
     Ok(Router::new()
@@ -285,15 +237,33 @@ pub async fn app_router(
         .route("/v1/auth/register", post(register_handler))
         .route("/v1/auth/api-tokens", post(create_api_token_handler))
         .route("/v1/auth/login", post(login_handler))
+        .route("/v1/auth/verify-client-key", post(verify_client_key_handler))
+        .route(
+            "/v1/workspaces",
+            get(workspaces::list_workspaces).post(workspaces::create_workspace),
+        )
+        .route(
+            "/v1/workspaces/:workspace_id",
+            get(workspaces::get_workspace)
+                .patch(workspaces::update_workspace)
+                .delete(workspaces::delete_workspace),
+        )
+        .route(
+            "/v1/workspaces/:workspace_id/mgt-key",
+            post(workspaces::mint_workspace_management_key),
+        )
         .route("/v1/keys", post(put_key_handler))
         .route("/v1/prompts", post(put_prompt_handler))
+        .layer(middleware::from_fn_with_state(
+            rate_limiter_from_env(),
+            promptkeeper_service::rate_limit::rate_limit_middleware,
+        ))
         .layer(middleware::from_fn(observability_middleware))
         .with_state(AppState {
             execute,
             secrets,
             put_service,
             db,
-            register_rate_limiter,
             analytics,
             prometheus_handle,
             readiness,
@@ -359,24 +329,12 @@ struct RegisterResponse {
 }
 
 /// POST /v1/auth/register: create user, default workspace, workspace_members, and API key.
-/// Rate limited: 1 request per IP per 3 minutes.
 async fn register_handler(
     State(state): State<AppState>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(body): Json<RegisterRequest>,
 ) -> Result<(StatusCode, Json<RegisterResponse>), (StatusCode, Json<serde_json::Value>)> {
     let surface = body.surface.clone();
-    let client_ip = client_ip_for_rate_limit(addr, &headers);
-    if !state.register_rate_limiter.check_and_record(&client_ip) {
-        state.analytics.track_register_failed(&surface, "rate_limited");
-        return Err((
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "error": "registration rate limited: one attempt per IP per 3 minutes"
-            })),
-        ));
-    }
 
     // Proof-of-work verification (required for register).
     let pow_nonce = headers
@@ -671,11 +629,17 @@ struct LoginRequest {
 }
 
 /// Response body for successful login (token + user; no password).
+/// Includes a freshly minted management key for the user's default (first) workspace, same shape as register.
 #[derive(Debug, serde::Serialize)]
 struct LoginResponse {
     pub token: String,
     pub expires_at: DateTime<Utc>,
     pub user: LoginUser,
+    /// First workspace by `workspace_members.created_at` (signup default).
+    pub default_workspace_id: uuid::Uuid,
+    /// New `pk_mgt_live_` key for `default_workspace_id`; shown once.
+    pub api_key: String,
+    pub api_key_scope: &'static str,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -685,7 +649,7 @@ struct LoginUser {
     pub name: Option<String>,
 }
 
-/// POST /v1/auth/login: verify password, create session, return token.
+/// POST /v1/auth/login: verify password, create session, return token and a new management API key for the default workspace.
 /// Generic "invalid email or password" on failure to avoid user enumeration.
 async fn login_handler(
     State(state): State<AppState>,
@@ -751,7 +715,7 @@ async fn login_handler(
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     let token = hex::encode(bytes);
 
-    let token_hash = {
+    let session_token_hash = {
         let mut hasher = Sha256::new();
         hasher.update(token.as_bytes());
         hex::encode(hasher.finalize())
@@ -760,11 +724,43 @@ async fn login_handler(
     // Session expires in 7 days.
     let expires_at = Utc::now() + chrono::Duration::days(7);
 
+    let default_workspace_id = match crate::auth::api_token::default_workspace_for_user(&state.db, user_id).await {
+        Ok(Some(wid)) => wid,
+        Ok(None) => {
+            tracing::error!(user_id = %user_id, "login: user has no workspace_members row");
+            state.analytics.track_login_failed(&surface, "no_workspace");
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "login failed" })),
+            ));
+        }
+        Err(e) => {
+            tracing::error!(error = ?e, "login: default workspace lookup failed");
+            state.analytics.track_login_failed(&surface, "db_error");
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "login failed" })),
+            ));
+        }
+    };
+
+    let api_key = keygen::generate_management_key();
+    let api_token_hash = hash_token(&api_key);
+
+    let mut tx = state.db.begin().await.map_err(|e| {
+        tracing::error!(error = ?e, "login: begin transaction");
+        state.analytics.track_login_failed(&surface, "db_error");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "login failed" })),
+        )
+    })?;
+
     sqlx::query("INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, $3)")
         .bind(user_id)
-        .bind(&token_hash)
+        .bind(&session_token_hash)
         .bind(expires_at)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             tracing::error!(error = ?e, "failed to create session");
@@ -774,6 +770,33 @@ async fn login_handler(
                 Json(serde_json::json!({ "error": "login failed" })),
             )
         })?;
+
+    sqlx::query(
+        "INSERT INTO api_tokens (user_id, workspace_id, token_hash, label, scope) VALUES ($1, $2, $3, $4, 'mgt')",
+    )
+    .bind(user_id)
+    .bind(default_workspace_id)
+    .bind(&api_token_hash)
+    .bind("Login")
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = ?e, "failed to insert login management api_token");
+        state.analytics.track_login_failed(&surface, "db_error");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "login failed" })),
+        )
+    })?;
+
+    tx.commit().await.map_err(|e| {
+        tracing::error!(error = ?e, "login: commit transaction");
+        state.analytics.track_login_failed(&surface, "db_error");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "login failed" })),
+        )
+    })?;
 
     state.analytics.track_user_logged_in(&surface, user_id);
 
@@ -785,6 +808,82 @@ async fn login_handler(
             email: user_email,
             name: user_name,
         },
+        default_workspace_id,
+        api_key,
+        api_key_scope: "mgt",
+    }))
+}
+
+/// Request for POST /v1/auth/verify-client-key.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VerifyClientKeyBody {
+    /// `pk_mgt_live_` or `pk_exe_live_` key (plaintext; use only over TLS).
+    pub api_key: String,
+    /// If set, the key must be bound to this workspace or the handler returns **403**.
+    pub workspace_id: Option<uuid::Uuid>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct VerifyClientKeyResponse {
+    pub ok: bool,
+    pub workspace_id: uuid::Uuid,
+    /// `"mgt"` or `"exe"`.
+    pub scope: String,
+}
+
+/// POST /v1/auth/verify-client-key — resolve a client API key to its workspace (and check optional `workspace_id`).
+///
+/// Does **not** accept session tokens; only `pk_*` keys stored in `api_tokens`.
+/// For execute/put, the workspace is always taken from the key row; this endpoint exists so clients can
+/// confirm a raw key matches an expected workspace before storing or using it.
+async fn verify_client_key_handler(
+    State(state): State<AppState>,
+    Json(body): Json<VerifyClientKeyBody>,
+) -> Result<Json<VerifyClientKeyResponse>, (StatusCode, Json<serde_json::Value>)> {
+    let key = body.api_key.trim();
+    if key.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "api_key is required" })),
+        ));
+    }
+
+    let resolved = crate::auth::api_token::resolve_client_api_token(&state.db, key)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = ?e, "verify_client_key db");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "verification failed" })),
+            )
+        })?;
+
+    let Some((_user_id, workspace_id, scope)) = resolved else {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": "invalid or unknown client API key"
+            })),
+        ));
+    };
+
+    if let Some(expected) = body.workspace_id {
+        if expected != workspace_id {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error": "client API key does not belong to the specified workspace"
+                })),
+            ));
+        }
+    }
+
+    Ok(Json(VerifyClientKeyResponse {
+        ok: true,
+        workspace_id,
+        scope: scope.as_str().to_string(),
     }))
 }
 

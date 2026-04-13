@@ -1,0 +1,15 @@
+[package]
+name = "promptkeeper_service"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+axum = { version = "0.7", features = ["http1"] }
+http = "1"
+serde_json = "1.0"
+tokio = { version = "1", features = ["time"] }
+
