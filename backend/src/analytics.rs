@@ -3,11 +3,46 @@
 //!
 //! Uses the official [`posthog-rs`](https://posthog.com/docs/libraries/rust) client (blocking)
 //! on the worker thread.
+//!
+//! Debug logs never emit `distinct_id`, `workspace_id`, or other identifiers—only a whitelist of
+//! operational fields (endpoint, surface, latency, stable codes, etc.). Full payloads are still
+//! sent to PostHog only.
 
 use serde_json::Value;
 use std::sync::mpsc::{self, Sender};
 
-use posthog_rs::{client, Client, Event};
+use posthog_rs::{client, Client, Error as PosthogError, Event};
+
+/// Property keys allowed in application logs (no user/workspace identifiers).
+const LOG_SAFE_PROPERTY_KEYS: &[&str] = &[
+    "endpoint",
+    "surface",
+    "provider",
+    "error_code",
+    "reason",
+    "latency_ms",
+    "added_latency_ms",
+    "count",
+];
+
+/// Subset of event properties safe for logs (GDPR-friendly: no distinct_id / workspace_id / PII).
+fn sanitize_properties_for_log(properties: &Value) -> Value {
+    let Some(obj) = properties.as_object() else {
+        return Value::Object(serde_json::Map::new());
+    };
+    let mut m = serde_json::Map::new();
+    for &key in LOG_SAFE_PROPERTY_KEYS {
+        if let Some(v) = obj.get(key) {
+            m.insert(key.to_string(), v.clone());
+        }
+    }
+    Value::Object(m)
+}
+
+fn safe_fields_json(properties: &Value) -> String {
+    serde_json::to_string(&sanitize_properties_for_log(properties))
+        .unwrap_or_else(|e| format!("{{\"<serialize>\":\"{e}\"}}"))
+}
 
 #[derive(Debug)]
 struct AnalyticsEvent {
@@ -27,38 +62,93 @@ impl AnalyticsReporter {
     /// Optional `POSTHOG_HOST` overrides the ingestion URL (default US: `https://us.i.posthog.com`).
     /// Use `https://eu.i.posthog.com` for EU projects.
     pub fn from_env() -> Self {
+        tracing::debug!(target: "promptkeeper::analytics", "analytics setup: begin");
+
         let (token, disabled_reason): (String, Option<&'static str>) =
             match std::env::var("POSTHOG_TOKEN") {
-                Err(_) => (String::new(), Some("POSTHOG_TOKEN is not set")),
+                Err(_) => {
+                    tracing::debug!(
+                        target: "promptkeeper::analytics",
+                        "analytics setup: POSTHOG_TOKEN env var is not set"
+                    );
+                    (String::new(), Some("POSTHOG_TOKEN is not set"))
+                }
                 Ok(v) => {
                     let t = v.trim().to_string();
                     if t.is_empty() {
+                        tracing::debug!(
+                            target: "promptkeeper::analytics",
+                            "analytics setup: POSTHOG_TOKEN is empty after trim"
+                        );
                         (t, Some("POSTHOG_TOKEN is empty or whitespace only"))
                     } else {
+                        tracing::debug!(
+                            target: "promptkeeper::analytics",
+                            token_len = t.len(),
+                            "analytics setup: POSTHOG_TOKEN present (length only; value not logged)"
+                        );
                         (t, None)
                     }
                 }
             };
 
         if let Some(reason) = disabled_reason {
+            tracing::debug!(
+                target: "promptkeeper::analytics",
+                reason = reason,
+                "analytics setup: PostHog disabled — no client or worker"
+            );
             return Self {
                 tx: None,
                 disabled_reason: Some(reason),
             };
         }
 
-        let ph_client = build_posthog_client(&token);
+        // `posthog-rs` without `async-client` uses `reqwest::blocking::Client`. That must not be
+        // constructed or dropped on Tokio's async runtime threads — it can panic with:
+        // "Cannot drop a runtime in a context where blocking is not allowed".
+        // `from_env()` runs from `app_router().await` on the main runtime, so build the client only
+        // inside this dedicated OS thread.
+        tracing::debug!(
+            target: "promptkeeper::analytics",
+            "analytics setup: spawning PostHog worker (client will be built on worker thread)"
+        );
 
         let (tx, rx) = mpsc::channel::<AnalyticsEvent>();
 
         std::thread::Builder::new()
             .name("posthog-analytics-worker".to_string())
             .spawn(move || {
+                tracing::debug!(
+                    target: "promptkeeper::analytics",
+                    "posthog worker: thread started"
+                );
+                tracing::debug!(
+                    target: "promptkeeper::analytics",
+                    "posthog worker: building blocking PostHog client (off async runtime)"
+                );
+                let ph_client = build_posthog_client(&token);
                 for evt in rx {
+                    let safe_fields = safe_fields_json(&evt.properties);
+                    tracing::debug!(
+                        target: "promptkeeper::analytics",
+                        event = %evt.name,
+                        safe_fields = %safe_fields,
+                        "posthog worker: dequeued event, capturing"
+                    );
                     capture_with_client(&ph_client, &evt.name, &evt.properties);
                 }
+                tracing::debug!(
+                    target: "promptkeeper::analytics",
+                    "posthog worker: channel closed, thread exiting"
+                );
             })
             .expect("failed to spawn analytics worker thread");
+
+        tracing::debug!(
+            target: "promptkeeper::analytics",
+            "analytics setup: complete (worker thread running)"
+        );
 
         Self {
             tx: Some(tx),
@@ -67,7 +157,14 @@ impl AnalyticsReporter {
     }
 
     fn enqueue(&self, name: &str, properties: Value) {
+        let safe_fields = safe_fields_json(&properties);
         if let Some(tx) = &self.tx {
+            tracing::debug!(
+                target: "promptkeeper::analytics",
+                event = %name,
+                safe_fields = %safe_fields,
+                "analytics enqueue: sending event to worker channel"
+            );
             if let Err(e) = tx.send(AnalyticsEvent {
                 name: name.to_string(),
                 properties,
@@ -80,6 +177,13 @@ impl AnalyticsReporter {
                 );
             }
         } else if let Some(reason) = self.disabled_reason {
+            tracing::debug!(
+                target: "promptkeeper::analytics",
+                reason = reason,
+                event = %name,
+                safe_fields = %safe_fields,
+                "analytics enqueue: skipped (PostHog disabled)"
+            );
             tracing::warn!(
                 reason = reason,
                 event = %name,
@@ -381,13 +485,42 @@ impl AnalyticsReporter {
 }
 
 fn build_posthog_client(token: &str) -> Client {
+    tracing::debug!(
+        target: "promptkeeper::analytics",
+        "posthog client build: reading POSTHOG_HOST"
+    );
     let host = std::env::var("POSTHOG_HOST")
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
+
     match host.as_deref() {
-        Some(h) => client((token, h)),
-        None => client(token),
+        Some(h) => {
+            tracing::debug!(
+                target: "promptkeeper::analytics",
+                posthog_host = %h,
+                "posthog client build: using explicit POSTHOG_HOST"
+            );
+            let c = client((token, h));
+            tracing::debug!(
+                target: "promptkeeper::analytics",
+                "posthog client build: client constructed (explicit host)"
+            );
+            c
+        }
+        None => {
+            tracing::debug!(
+                target: "promptkeeper::analytics",
+                default_ingestion = "https://us.i.posthog.com",
+                "posthog client build: POSTHOG_HOST unset — SDK default US ingestion"
+            );
+            let c = client(token);
+            tracing::debug!(
+                target: "promptkeeper::analytics",
+                "posthog client build: client constructed (default host)"
+            );
+            c
+        }
     }
 }
 
@@ -396,6 +529,13 @@ fn capture_with_client(ph_client: &Client, name: &str, properties: &Value) {
         tracing::warn!(event = %name, "analytics properties must be a JSON object");
         return;
     };
+    let safe_fields = safe_fields_json(properties);
+    tracing::debug!(
+        target: "promptkeeper::analytics",
+        event = %name,
+        safe_fields = %safe_fields,
+        "analytics capture: sending to PostHog"
+    );
     let distinct_id = obj
         .get("distinct_id")
         .and_then(|v| v.as_str())
@@ -412,7 +552,89 @@ fn capture_with_client(ph_client: &Client, name: &str, properties: &Value) {
         }
     }
 
-    if let Err(e) = ph_client.capture(event) {
-        tracing::warn!(error = %e, event = %name, "posthog capture failed");
+    let capture_result = ph_client.capture(event);
+    match &capture_result {
+        Ok(()) => {
+            tracing::debug!(
+                target: "promptkeeper::analytics",
+                event = %name,
+                "analytics capture: PostHog accepted event (SDK Ok — HTTP 2xx; response body not exposed by posthog-rs)"
+            );
+        }
+        Err(e) => {
+            log_posthog_error_debug(e);
+            tracing::warn!(error = %e, event = %name, "posthog capture failed");
+        }
+    }
+}
+
+fn log_posthog_error_debug(err: &PosthogError) {
+    match err {
+        PosthogError::BadRequest(body) => {
+            tracing::debug!(
+                target: "promptkeeper::analytics",
+                ?err,
+                response_body = %body,
+                "posthog HTTP response: 400/413 bad request"
+            );
+        }
+        PosthogError::ServerError { status, message } => {
+            tracing::debug!(
+                target: "promptkeeper::analytics",
+                ?err,
+                status = *status,
+                response_body = %message,
+                "posthog HTTP response: 5xx server error"
+            );
+        }
+        PosthogError::RateLimit => {
+            tracing::debug!(
+                target: "promptkeeper::analytics",
+                ?err,
+                "posthog HTTP response: 429 rate limited"
+            );
+        }
+        PosthogError::Connection(msg) => {
+            tracing::debug!(
+                target: "promptkeeper::analytics",
+                ?err,
+                detail = %msg,
+                "posthog HTTP/network error"
+            );
+        }
+        PosthogError::Serialization(msg) => {
+            tracing::debug!(
+                target: "promptkeeper::analytics",
+                ?err,
+                detail = %msg,
+                "posthog serialization error"
+            );
+        }
+        _ => {
+            tracing::debug!(target: "promptkeeper::analytics", ?err, "posthog error");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_properties_for_log_omits_identifiers() {
+        let v = serde_json::json!({
+            "distinct_id": "user-uuid",
+            "workspace_id": "ws-uuid",
+            "endpoint": "/v1/execute",
+            "latency_ms": 42,
+            "surface": "web",
+        });
+        let s = sanitize_properties_for_log(&v);
+        let obj = s.as_object().expect("object");
+        assert!(!obj.contains_key("distinct_id"));
+        assert!(!obj.contains_key("workspace_id"));
+        assert_eq!(obj.get("endpoint").and_then(|x| x.as_str()), Some("/v1/execute"));
+        assert_eq!(obj.get("latency_ms").and_then(|x| x.as_u64()), Some(42));
+        assert_eq!(obj.get("surface").and_then(|x| x.as_str()), Some("web"));
     }
 }

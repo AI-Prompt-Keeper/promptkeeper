@@ -1,4 +1,9 @@
 //! Request ID + inflight + completion metrics/logging on body end.
+//!
+//! Health probes and Prometheus self-scrape (`/metrics`) are excluded from `prke_requests_total`,
+//! `prke_request_duration_millis`, `prke_inflight_requests`, and the `request completed` log line
+//! so orchestrator / scraper traffic does not skew product metrics. Those paths use a `debug`
+//! `request` span instead of `info` so default log filters stay quiet.
 
 use crate::observability::metrics::label_or_unknown;
 use crate::observability::request_id::{ObservabilityFields, ObservabilityShared, RequestId, X_REQUEST_ID};
@@ -13,6 +18,15 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use uuid::Uuid;
 
+/// Paths used only for liveness/readiness or metrics exposition — omit from RED-style metrics and
+/// completion logs (still get request IDs and tracing span).
+fn is_excluded_from_request_metrics(path: &str) -> bool {
+    matches!(
+        path,
+        "/health" | "/health/live" | "/health/ready" | "/metrics"
+    )
+}
+
 /// Panic-safe inflight decrement (gauge) when dropped after the response body completes.
 pub struct InflightGuard;
 
@@ -26,17 +40,23 @@ pub struct InstrumentedBody<B> {
     inner: Pin<Box<B>>,
     meta: ObservabilityShared,
     status: http::StatusCode,
+    /// `None` when the request path is excluded from inflight (health / metrics).
     guard: Option<InflightGuard>,
     recorded: bool,
 }
 
 impl<B> InstrumentedBody<B> {
-    pub fn new(inner: B, meta: ObservabilityShared, status: http::StatusCode, guard: InflightGuard) -> Self {
+    pub fn new(
+        inner: B,
+        meta: ObservabilityShared,
+        status: http::StatusCode,
+        guard: Option<InflightGuard>,
+    ) -> Self {
         Self {
             inner: Box::pin(inner),
             meta,
             status,
-            guard: Some(guard),
+            guard,
             recorded: false,
         }
     }
@@ -46,6 +66,19 @@ impl<B> InstrumentedBody<B> {
             return;
         }
         self.recorded = true;
+
+        let path = {
+            let g = match self.meta.lock() {
+                Ok(x) => x,
+                Err(p) => p.into_inner(),
+            };
+            g.path.clone()
+        };
+
+        if is_excluded_from_request_metrics(&path) {
+            drop(self.guard.take());
+            return;
+        }
 
         let duration_ms = {
             let g = match self.meta.lock() {
@@ -167,15 +200,24 @@ where
 pub async fn observability_middleware(mut req: Request, next: Next) -> Response {
     let id = Uuid::new_v4();
     let path = req.uri().path().to_string();
-    let span = tracing::info_span!("request", request_id = %id, path = %path);
+    let exclude_metrics = is_excluded_from_request_metrics(&path);
+    let span = if exclude_metrics {
+        tracing::debug_span!("request", request_id = %id, path = %path)
+    } else {
+        tracing::info_span!("request", request_id = %id, path = %path)
+    };
     let _e = span.enter();
 
     let state: ObservabilityShared = Arc::new(Mutex::new(ObservabilityFields::new(id, path)));
     req.extensions_mut().insert(RequestId(id));
     req.extensions_mut().insert(Arc::clone(&state));
 
-    metrics::gauge!("prke_inflight_requests").increment(1.0);
-    let guard = InflightGuard;
+    let guard = if exclude_metrics {
+        None
+    } else {
+        metrics::gauge!("prke_inflight_requests").increment(1.0);
+        Some(InflightGuard)
+    };
 
     let mut res = next.run(req).await;
 

@@ -47,6 +47,8 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_REGION: ${AWS_REGION:-}
       KMS_KEY_ID: ${KMS_KEY_ALIAS:-}
+      POSTHOG_HOST: ${POSTHOG_HOST:-}
+      POSTHOG_TOKEN: ${POSTHOG_TOKEN:-}
     ports:
       - "3000:3000"
     volumes:
