@@ -16,6 +16,12 @@ primary_region = "iad"
 [env]
   # STATIC_DIR optional; omit to serve only API. Set if you bake frontend into image later.
 
+# Custom Prometheus metrics (prke_*); Fly scrapes ~every 15s into org Prometheus / fly-metrics.net.
+# https://fly.io/docs/monitoring/metrics/#custom-metrics
+[metrics]
+  port = 3000
+  path = "/metrics"
+
 [http_service]
   internal_port = 3000
   force_https = true
