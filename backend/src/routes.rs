@@ -968,6 +968,11 @@ async fn execute_handler(
                 .json_data(serde_json::json!({ "error": e.to_string() }))
                 .unwrap();
             let s: SseStream = Box::pin(futures_util::stream::iter(vec![Ok(event)]));
+            crate::observability::metrics::record_execute_setup_duration_ms(
+                None,
+                None,
+                start.elapsed().as_millis(),
+            );
             return Sse::new(s);
         }
     };
@@ -980,6 +985,8 @@ async fn execute_handler(
         req.provider.clone(),
         req.model.clone(),
     );
+    let provider_for_metrics = req.provider.clone();
+    let model_for_metrics = req.model.clone();
     let span = tracing::info_span!("execute", function_id = %function_id);
 
     let context_id = auth.workspace_id.to_string();
@@ -999,6 +1006,11 @@ async fn execute_handler(
     let event_stream: SseStream = match result {
             Ok(Ok(stream)) => {
                 let latency_ms = start.elapsed().as_millis();
+                crate::observability::metrics::record_execute_setup_duration_ms(
+                    provider_for_metrics.as_deref(),
+                    model_for_metrics.as_deref(),
+                    latency_ms,
+                );
                 tracing::info!(
                     function_id = %function_id,
                     latency_ms = %latency_ms,
@@ -1024,6 +1036,11 @@ async fn execute_handler(
                 tracing::warn!(err = %e, "execute failed");
                 crate::observability::metrics::apply_execute_failure(&obs, &e);
                 let latency_ms = start.elapsed().as_millis();
+                crate::observability::metrics::record_execute_setup_duration_ms(
+                    provider_for_metrics.as_deref(),
+                    model_for_metrics.as_deref(),
+                    latency_ms,
+                );
                 let (code, prov) = crate::execute::execute_error_analytics_labels(&e);
                 analytics.track_proxy_error(
                     "/v1/execute",
@@ -1053,6 +1070,11 @@ async fn execute_handler(
                     ),
                 );
                 let latency_ms = start.elapsed().as_millis();
+                crate::observability::metrics::record_execute_setup_duration_ms(
+                    provider_for_metrics.as_deref(),
+                    model_for_metrics.as_deref(),
+                    latency_ms,
+                );
                 analytics.track_proxy_error(
                     "/v1/execute",
                     &surface,

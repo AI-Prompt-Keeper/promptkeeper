@@ -121,3 +121,22 @@ pub fn label_or_unknown(opt: Option<&str>) -> String {
         }
     }
 }
+
+/// Time from POST `/v1/execute` until the SSE stream is ready (or error/timeout response is built).
+/// This approximates PromptKeeper overhead **before** upstream token streaming; it excludes time
+/// spent streaming the LLM response. For end-to-end request time (including stream), use
+/// `prke_request_duration_millis{endpoint="/v1/execute"}` from the HTTP middleware.
+pub fn record_execute_setup_duration_ms(
+    provider: Option<&str>,
+    model: Option<&str>,
+    millis: u128,
+) {
+    let prov = label_or_unknown(provider);
+    let mdl = label_or_unknown(model);
+    metrics::histogram!(
+        "prke_execute_setup_duration_millis",
+        "provider" => prov,
+        "model" => mdl,
+    )
+    .record(millis as f64);
+}
