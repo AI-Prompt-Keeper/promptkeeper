@@ -17,10 +17,13 @@ primary_region = "iad"
   # STATIC_DIR optional; omit to serve only API. Set if you bake frontend into image later.
 
 # Custom Prometheus metrics (prke_*); Fly scrapes ~every 15s into org Prometheus / fly-metrics.net.
+# Must target the same process group as [http_service] (`app`) or scrapes may not attach.
+# https://fly.io/docs/reference/configuration/#the-metrics-section
 # https://fly.io/docs/monitoring/metrics/#custom-metrics
-[metrics]
+[[metrics]]
   port = 3000
   path = "/metrics"
+  processes = ["app"]
 
 [http_service]
   internal_port = 3000
